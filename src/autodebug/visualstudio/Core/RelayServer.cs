@@ -16,7 +16,7 @@ namespace AutoDebug
 {
     public sealed class RelayServer : IDisposable
     {
-        public const string Version = "0.8.0";
+        public const string Version = "0.9.0";
         const int MaxLine = 1024 * 1024;
 
         readonly IBackend backend;
