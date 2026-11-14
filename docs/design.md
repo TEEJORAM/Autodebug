@@ -153,7 +153,7 @@ an agent waits longer for the Approve click by calling `wait` again.
 |---|---|
 | `list_targets` | IDE windows (with `ide`: cursor, vscode or visualstudio), their folders, launch configurations (program and module separately, each with its `build` type and `start_with`: the exact `ide`, name and folder to pass) and build tasks. `ide` limits it to one IDE |
 | `open_ide` | Open a solution or project folder in the IDE when no window has it, and wait until Autodebug answers there (see "Opening the IDE") |
-| `renderdoc` | Read a RenderDoc capture of one GPU frame (see "RenderDoc"): `op` summary, event, pixel or vertex; `debug_shader`; runs none of the program |
+| `renderdoc` | RenderDoc (see "RenderDoc"): `op` capture runs the program after the developer approves and captures one frame; summary, event, pixel and vertex read a capture and run none of the program; `debug_shader` |
 | `problems` | The IDE's compiler and linter problems for a folder, without a session and without running anything: VS Code and Cursor's Problems (`vscode.languages.getDiagnostics`, every diagnostic source such as language servers and task problem matchers), Visual Studio's Error List entries (as its filters show them) and the last 60 lines of its Build pane. `severity` (error by default, then warning, information, hint), `file` (part of the path), `limit` (≤ 200). Files outside the folder are left out; text is redacted like values. A relay without the `problems` feature fails with `OLD_EXTENSION` |
 | `start_session` | Ask the developer to approve, then build, set breakpoints, launch or attach; waits for the first stop. `ide` and `workspace_folder` pick the window when several are open. `args` replaces the program's arguments for this run; `ticket` names the issue it is for; `test` runs one test (see "One test") |
 | `reproduce` | Before debugging a reported bug: one approved run with no breakpoints, to its end; returns the exit code and last output lines, and tells the agent to compare them with the ticket's `symptom` |
@@ -249,9 +249,17 @@ replays the capture and runs none of the captured program, so it needs no approv
   capture through target control, then every op. Pixel shader debugging of a shader that
   samples a texture did not return there (the time limit kept the pixel history); vertex
   shader debugging worked. Not yet tried on Windows or on a hardware GPU.
-- **Not yet.** Capturing a frame from the agent: it runs the program, so it will go through
-  the Approve dialog (`ExecuteAndInject`, then target control `QueueCapture`, which the same
-  script approach can drive).
+- **Capturing (`op capture`).** It runs the program, so the IDE asks first: the relay's
+  `consent` op (kind `renderdoc_capture`) shows a modal Approve dialog whose text the relay
+  builds from the fields (program, arguments, working folder, frame, capture folder; no
+  control characters), never from text the agent wrote. The capture folder is always the
+  project's `autodebug-reports/captures`. Only after Approve does the script run
+  `ExecuteAndInject`, connect with target control, `QueueCapture(frame, 1)` (or wait for the
+  developer's F12 / Print Screen when no frame is given), close the program (its process,
+  from target control) and summarise the capture. If the program never registers a graphics
+  API with RenderDoc it says so (on Linux, Vulkan capture needs RenderDoc's layer:
+  `renderdoccmd vulkanlayer --register --user`). Checked for real: the relay's dialog,
+  Approve, then RenderDoc 1.47 captured vkcube's frame 20 in 9 s and closed it.
 
 ## Working from a ticket
 
@@ -358,7 +366,7 @@ Connection file `<state>/bridges/<window>.json` (`%LOCALAPPDATA%\autodebug`,
 `{"protocol": 4, "port", "token", "window", "ide", "folders", "version"}`.
 Newer relays add `features` to `info`: `breakpoint_options` (hit counts, log
 points, columns), `inspection` (the requests below), `problems` (the `problems`
-op) and, in VS Code and Cursor,
+op), `consent` (the `consent` op) and, in VS Code and Cursor,
 `child_sessions`.
 
 Finding windows: the window name ends with the process that wrote the file (the
@@ -382,6 +390,7 @@ token closes the connection. Then one JSON object per line:
 | `editor_breakpoints` | – | the developer's own enabled breakpoints: {file, line} or {function} |
 | `notify` | `text` (≤ 300) | – (a non-modal note to the developer; never an approval) |
 | `problems` | `folder` | `problems` [{file (absolute), line, column, severity, message, source, code, project}] in that folder (at most 500), `more`; Visual Studio adds `build_output` (the Build pane's last 60 lines) |
+| `consent` | `kind` (`renderdoc_capture`), `program`, `arguments`, `working_dir`, `capture_folder`, `frame` | `approved`, `reason`. A modal dialog the relay writes from these fields; 2 minutes at most |
 | `screenshot` | `file` (absolute `.png` under `<folder>/autodebug-reports/screenshots`) | `file`, `width`, `height`, `variables_window`. Visual Studio only, and only when the session was approved with `screenshots` (`NOT_APPROVED` otherwise) |
 | `stop` | `reason` | – (ends the session; attach sessions detach first) |
 

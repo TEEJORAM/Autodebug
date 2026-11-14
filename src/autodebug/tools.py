@@ -331,16 +331,8 @@ class Debugger:
                  file: str | None = None, limit: int = 50) -> dict:
         """The IDE's compiler and linter problems (VS Code and Cursor: Problems; Visual Studio: Error List and the
         end of the Build pane). Runs nothing, so it needs no approval."""
-        try:
-            window = self._window(workspace_folder, ide)
-        except DebugError as exc:
-            preferred = None if ide else preferred_ide()
-            windows = matching(self._find_windows(), workspace_folder, ide)
-            chosen = [w for w in windows if w.ide == preferred]
-            if exc.code != "AMBIGUOUS_WINDOW" or len(chosen) != 1:
-                raise
-            window = chosen[0]
-        connection = self._connect(window)
+        connection = self._connect(self._window_or_preferred(workspace_folder, ide))
+        window = connection.window
         try:
             result = connection.call("problems", {"folder": workspace_folder, "severity": severity, "file": file,
                                                   "limit": limit})
@@ -352,12 +344,31 @@ class Debugger:
                           "they do not prove a runtime root cause.")
         return result
 
-    def renderdoc(self, capture: str, op: str = "summary", event: int | None = None, x: int | None = None,
-                  y: int | None = None, vertex: int | None = None, debug_shader: bool = False,
-                  filter: str | None = None, limit: int = 100, timeout_seconds: float = 120) -> dict:
-        """Read a RenderDoc capture (.rdc) of one GPU frame: replays it in RenderDoc, runs none of the program."""
+    def _window_or_preferred(self, workspace_folder: str | None, ide: str | None) -> Window:
+        """The IDE window for a folder; when Cursor and Visual Studio both have it, the developer's preferred IDE."""
+        try:
+            return self._window(workspace_folder, ide)
+        except DebugError as exc:
+            preferred = None if ide else preferred_ide()
+            chosen = [w for w in matching(self._find_windows(), workspace_folder, ide) if w.ide == preferred]
+            if exc.code != "AMBIGUOUS_WINDOW" or len(chosen) != 1:
+                raise
+            return chosen[0]
+
+    def renderdoc(self, capture: str | None = None, op: str = "summary", event: int | None = None,
+                  x: int | None = None, y: int | None = None, vertex: int | None = None, debug_shader: bool = False,
+                  filter: str | None = None, limit: int = 100, timeout_seconds: float = 120,
+                  program: str | None = None, arguments: str = "", working_dir: str | None = None,
+                  frame: int | None = None, wait_seconds: float = 60, workspace_folder: str | None = None,
+                  ide: str | None = None) -> dict:
+        """Capture a GPU frame with RenderDoc (op capture: runs the program after the developer approves) or read a
+        capture (.rdc): replays it in RenderDoc and runs none of the program."""
         from autodebug import gpu
 
+        if op == "capture":
+            return self._renderdoc_capture(program, arguments, working_dir, frame, wait_seconds, workspace_folder, ide)
+        if not capture:
+            raise DebugError("BAD_REQUEST", "capture is the .rdc file to read (op capture makes one)")
         result = gpu.analyse(capture, op=op, event=event, x=x, y=y, vertex=vertex, debug_shader=debug_shader,
                              name_filter=filter, limit=limit, timeout_seconds=timeout_seconds)
         where = f"event {event}" if event is not None else Path(capture).name
@@ -372,6 +383,37 @@ class Debugger:
                           "pixel": "Each write shows the colour before and after. debug_shader=true steps the "
                                    "pixel shader for this pixel.",
                           "vertex": "Each step lists the shader variables it changed."}[op]
+        return result
+
+    def _renderdoc_capture(self, program, arguments, working_dir, frame, wait_seconds, workspace_folder, ide) -> dict:
+        from autodebug import gpu
+
+        if not program or not Path(program).is_absolute() or not Path(program).is_file():
+            raise DebugError("BAD_REQUEST", "program is the absolute path of the program to capture (an existing file)")
+        if len(arguments or "") > 2000:
+            raise DebugError("BAD_REQUEST", "arguments are at most 2000 characters")
+        folder_for_program = working_dir or str(Path(program).parent)
+        if not Path(folder_for_program).is_dir():
+            raise DebugError("BAD_REQUEST", f"working_dir {folder_for_program} is not a folder")
+        window = self._window_or_preferred(workspace_folder, ide)
+        connection = self._connect(window)
+        try:
+            answer = connection.call("consent", {"folder": workspace_folder, "kind": "renderdoc_capture",
+                                                 "program": program, "arguments": arguments or "",
+                                                 "working_dir": folder_for_program, "frame": frame})
+        finally:
+            connection.close()
+        captures = answer["capture_folder"]
+        if not answer["approved"]:
+            self._log("capture denied", Path(program).name, answer["reason"])
+            return {"op": "capture", "approved": False, "reason": answer["reason"],
+                    "next": "The developer did not approve the capture. Nothing ran."}
+        self._log("capture approved", Path(program).name, "the developer clicked Approve")
+        result = gpu.capture(program, arguments or "", folder_for_program, captures, frame, wait_seconds)
+        self._log("renderdoc", Path(result["capture"]).name,
+                  f"frame {result.get('frame')}: {result.get('action_count', 0)} actions")
+        result["approved"] = True
+        result["next"] = "Read it with op event, pixel or vertex and capture=<this capture's path>."
         return result
 
     def open_ide(self, ide: str, path: str, wait_seconds: float = 45) -> dict:

@@ -103,7 +103,7 @@ class Session(Values):
             "continue": self.resume, "pause": self.pause, "breakpoints": self.breakpoints, "stop": self.stop,
             "screenshot": self.screenshot, "watch": self.watch, "modules": self.modules, "source": self.source,
             "disassemble": self.disassemble, "memory": self.memory, "locations": self.locations,
-            "problems": self.problems,
+            "problems": self.problems, "consent": self.consent,
         }.get(op)
         if handler is None:
             raise DebugError("BAD_REQUEST", f"unknown operation {op}")
@@ -167,6 +167,22 @@ class Session(Values):
         if output:
             result["build_output"] = output
         return result
+
+    def consent(self, args: dict) -> dict:
+        """Ask the developer to approve running a program outside a debug session (a RenderDoc capture). The relay
+        builds the dialog from the fields and waits for the answer (2 minutes at most)."""
+        info = self._relay("info")
+        if "consent" not in (info.get("features") or []):
+            ide = IDE_NAMES.get(self.window.ide, self.window.ide)
+            raise DebugError("OLD_EXTENSION", f"this {ide} window's Autodebug extension cannot ask to approve a "
+                                              f"capture yet. Ask the developer to run `autodebug setup "
+                                              f"{self.window.ide}` and reload the window (Visual Studio: restart it).")
+        folder = self._relay("workspace", {"folder": args.get("folder")})["folder"]
+        captures = str(Path(folder) / "autodebug-reports" / "captures")  # always in the project, never the agent's choice
+        request = {**{k: v for k, v in args.items() if k != "folder"}, "capture_folder": captures}
+        answer = self._relay("consent", request, timeout=135)
+        return {"folder": folder, "capture_folder": captures, "approved": bool(answer.get("approved")),
+                "reason": answer.get("reason") or ""}
 
     # -- start: everything is checked here, then the extension asks the developer ---------------
 

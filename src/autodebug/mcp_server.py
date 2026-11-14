@@ -128,21 +128,28 @@ TOOLS = {
                                    "description": "only files whose path contains this text"},
                           "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}})),
     "renderdoc": (
-        "Read a RenderDoc capture (.rdc) of one GPU frame, for rendering bugs. It replays the capture inside RenderDoc "
-        "and runs none of the program, so it needs no approval. op summary: the frame's actions (draws, dispatches) "
-        "with event ids, and the API's validation messages. op event: the pipeline at that event (shaders, targets, "
-        "viewport). op pixel: which events wrote pixel x, y and the colour before and after each; debug_shader steps "
-        "its pixel shader. op vertex: steps the vertex shader for one vertex. Needs RenderDoc installed.",
-        _schema({"capture": {"type": "string", "maxLength": 1000, "description": "absolute path to the .rdc file"},
-                 "op": {"type": "string", "enum": ["summary", "event", "pixel", "vertex"], "default": "summary"},
+        "RenderDoc, for rendering bugs. op capture runs program under RenderDoc and captures one GPU frame (frame, or "
+        "the one the developer triggers with F12); the IDE asks the developer to Approve it first, and the program is "
+        "closed after. The other ops read a capture (.rdc) and run none of the program: op summary lists the frame's "
+        "actions (draws, dispatches) with event ids and the API's validation messages; op event shows the pipeline at "
+        "an event (shaders, targets, viewport); op pixel lists the events that wrote pixel x, y with the colour before "
+        "and after, and debug_shader steps its pixel shader; op vertex steps the vertex shader for one vertex. Needs "
+        "RenderDoc installed.",
+        _schema({"op": {"type": "string", "enum": ["capture", "summary", "event", "pixel", "vertex"], "default": "summary"},
+                 "capture": {"type": "string", "maxLength": 1000, "description": "absolute path to the .rdc file to read"},
                  "event": {"type": "integer", "minimum": 0, "description": "an event id from op summary"},
                  "x": {"type": "integer", "minimum": 0}, "y": {"type": "integer", "minimum": 0},
                  "vertex": {"type": "integer", "minimum": 0},
                  "debug_shader": {"type": "boolean", "default": False},
                  "filter": {"type": "string", "maxLength": 200, "description": "op summary: action names containing this"},
                  "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100},
-                 "timeout_seconds": {"type": "number", "minimum": 5, "maximum": 600, "default": 120}},
-                ("capture",))),
+                 "timeout_seconds": {"type": "number", "minimum": 5, "maximum": 600, "default": 120},
+                 "program": {"type": "string", "maxLength": 1000, "description": "op capture: absolute path of the program"},
+                 "arguments": {"type": "string", "maxLength": 2000, "default": ""},
+                 "working_dir": {"type": "string", "maxLength": 1000, "description": "op capture: default the program's folder"},
+                 "frame": {"type": "integer", "minimum": 0, "description": "op capture: frame number; omit to wait for F12"},
+                 "wait_seconds": {"type": "number", "minimum": 5, "maximum": 600, "default": 60},
+                 "workspace_folder": _FOLDER, "ide": _IDE})),
     "open_ide": (
         "Open a solution (.sln) or project folder in the IDE when no window has it, and wait until Autodebug answers "
         "there. Reuses an open window; while the IDE loads, calling it again waits instead of opening another copy. "

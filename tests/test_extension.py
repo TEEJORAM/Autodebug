@@ -279,6 +279,59 @@ class Problems(HarnessTest):
         self.assertIsNone(self.debugger.connection, "reading problems starts no session")
 
 
+class RenderDocCaptureTests:
+    """op capture asks for Approve in the IDE with a dialog the relay writes, and runs RenderDoc only after it.
+    Run against both relays (RenderDocCapture here, RenderDocCaptureInVisualStudio)."""
+
+    def setUp(self):
+        super().setUp()
+        from tests.test_gpu import install_fake
+
+        root = Path(tempfile.mkdtemp())
+        self.fake = install_fake(root)
+        old = {k: os.environ.get(k) for k in ("AUTODEBUG_QRENDERDOC", "DISPLAY")}
+        os.environ.update({"AUTODEBUG_QRENDERDOC": str(self.fake), "DISPLAY": os.environ.get("DISPLAY", ":0")})
+        self.addCleanup(lambda: [os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+                                 for k, v in old.items()])
+        self.ran = Path(self.workspace) / "autodebug-reports" / "captures" / "ran"
+
+    def capture_in_background(self):
+        result = {}
+        thread = threading.Thread(target=lambda: result.update(self.debugger.renderdoc(
+            op="capture", program=sys.executable, arguments="game.py --level 2", frame=20)))
+        thread.start()
+        dialog = json.loads(self.expect("DIALOG"))
+        return thread, result, dialog
+
+    def test_the_dialog_says_what_runs_and_approve_captures(self):
+        thread, result, dialog = self.capture_in_background()
+        self.assertEqual(dialog["message"], "Autodebug: let the AI agent run a program under RenderDoc to capture a GPU frame?")
+        self.assertTrue(dialog["modal"])
+        self.assertIn(f"Runs: {sys.executable} game.py --level 2", dialog["detail"])
+        self.assertIn("Captures: frame 20", dialog["detail"])
+        self.assertFalse(self.ran.exists(), "nothing runs before Approve")
+        self.send("approve")
+        thread.join(30)
+        self.assertEqual((result["approved"], result["frame"]), (True, 20))
+        self.assertEqual(self.ran.read_text(), sys.executable)
+        self.assertEqual([e.kind for e in self.debugger.timeline][-2:], ["capture approved", "renderdoc"])
+
+    def test_deny_runs_nothing(self):
+        thread, result, _ = self.capture_in_background()
+        self.send("deny")
+        thread.join(30)
+        self.assertEqual(result["approved"], False)
+        self.assertFalse(self.ran.exists())
+
+    def test_the_relay_writes_the_dialog_not_the_agent(self):
+        with self.assertRaises(DebugError):
+            self.debugger.renderdoc(op="capture", program=sys.executable, arguments="x\nRuns: something else")
+
+
+class RenderDocCapture(RenderDocCaptureTests, HarnessTest):
+    pass
+
+
 class ApprovalDetail(HarnessTest):
     def _launch(self, config, tasks=()):
         folder = self.workspace / ".vscode"

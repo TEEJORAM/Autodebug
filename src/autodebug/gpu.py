@@ -42,8 +42,8 @@ def find_qrenderdoc() -> str | None:
     return None
 
 
-def _inputs(capture: Path, op: str, event, x, y, vertex, debug_shader: bool, name_filter, limit: int, out: Path) -> dict:
-    values = {"CAPTURE": str(capture), "OP": op, "OUT": str(out), "DEBUG": "1" if debug_shader else "",
+def _inputs(capture: Path, op: str, event, x, y, vertex, debug_shader: bool, name_filter, limit: int) -> dict:
+    values = {"CAPTURE": str(capture), "OP": op, "DEBUG": "1" if debug_shader else "",
               "FILTER": name_filter or "", "LIMIT": str(limit)}
     for key, value in (("EVENT", event), ("X", x), ("Y", y), ("VERTEX", vertex)):
         values[key] = "" if value is None else str(int(value))
@@ -61,6 +61,34 @@ def analyse(capture: str, op: str = "summary", event: int | None = None, x: int 
     path = Path(capture)
     if not path.is_absolute() or path.suffix.lower() != ".rdc" or not path.is_file():
         raise DebugError("NOT_FOUND", f"{capture} is not an existing RenderDoc capture (an absolute path to a .rdc file)")
+    found, timed_out, seconds = _run(_inputs(path, op, event, x, y, vertex, debug_shader, name_filter,
+                                             max(1, min(int(limit), 1000))), timeout_seconds)
+    return _shaped(found, op, timed_out, seconds)
+
+
+def capture(program: str, arguments: str, working_dir: str, capture_folder: str, frame: int | None,
+            wait_seconds: float = 60) -> dict:
+    """Run `program` under RenderDoc, capture one frame (frame `frame`, or the one the developer triggers with F12),
+    close the program and summarise the capture. Only after the developer approved it (the caller asks)."""
+    Path(capture_folder).mkdir(parents=True, exist_ok=True)
+    wait = max(5, min(int(wait_seconds), 600))
+    env = {"AUTODEBUG_RD_OP": "capture", "AUTODEBUG_RD_PROGRAM": program, "AUTODEBUG_RD_ARGS": arguments,
+           "AUTODEBUG_RD_WORKDIR": working_dir, "AUTODEBUG_RD_CAPDIR": capture_folder,
+           "AUTODEBUG_RD_FRAME": "" if frame is None else str(int(frame)), "AUTODEBUG_RD_WAIT": str(wait),
+           "AUTODEBUG_RD_LIMIT": "200", "AUTODEBUG_RD_FILTER": "", "AUTODEBUG_RD_DEBUG": ""}
+    found, timed_out, seconds = _run(env, wait + 90)
+    result = _shaped(found, "summary", timed_out, seconds)
+    result["op"] = "capture"
+    for key in ("capture", "frame"):
+        if key in found:
+            result[key] = found[key]
+    if "capture" not in result:
+        raise DebugError("TIMEOUT", "RenderDoc captured no frame " + (result.get("note") or ""))
+    return result
+
+
+def _run(inputs: dict, timeout_seconds: float) -> tuple[dict, bool, float]:
+    """Run the replay script in RenderDoc with `inputs`; what it wrote, whether it ran out of time, and how long."""
     program = find_qrenderdoc()
     if program is None:
         raise DebugError("NOT_SUPPORTED", "RenderDoc is not installed (no qrenderdoc on PATH or in Program Files). "
@@ -71,13 +99,12 @@ def analyse(capture: str, op: str = "summary", event: int | None = None, x: int 
                                           "and set DISPLAY.")
     with tempfile.TemporaryDirectory(prefix="autodebug-rd-") as folder:
         out = Path(folder) / "result.json"
-        env = {**os.environ, **_inputs(path, op, event, x, y, vertex, debug_shader, name_filter,
-                                       max(1, min(int(limit), 1000)), out)}
+        env = {**os.environ, **inputs, "AUTODEBUG_RD_OUT": str(out)}
         began = time.monotonic()
         process = subprocess.Popen([program, "--python", str(SCRIPT)], env=env, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
-            process.wait(timeout=max(5.0, min(float(timeout_seconds), 600.0)))
+            process.wait(timeout=max(5.0, min(float(timeout_seconds), 900.0)))
             timed_out = False
         except subprocess.TimeoutExpired:
             process.kill()
@@ -93,9 +120,9 @@ def analyse(capture: str, op: str = "summary", event: int | None = None, x: int 
         hint = ("If RenderDoc has never been opened on this computer, it first asks a question in a window that "
                 "cannot show here: ask the developer to open RenderDoc once and answer it.")
         if timed_out:
-            raise DebugError("TIMEOUT", f"RenderDoc did not start the replay within {seconds} s. {hint}")
+            raise DebugError("TIMEOUT", f"RenderDoc did not start within {seconds} s. {hint}")
         raise DebugError("IDE_ERROR", f"RenderDoc ended without a result (exit code {process.returncode}). {hint}")
-    return _shaped(found, op, timed_out, seconds)
+    return found, timed_out, seconds
 
 
 def _shaped(found: dict, op: str, timed_out: bool, seconds: float) -> dict:

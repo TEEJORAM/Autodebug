@@ -24,6 +24,11 @@ FAKE = textwrap.dedent("""
     if mode == "error":
         write({"progress": [], "done": False, "error": "Traceback...\\nRuntimeError: RenderDoc could not open the capture"})
         sys.exit(1)
+    if op == "capture":
+        open(os.environ["AUTODEBUG_RD_CAPDIR"] + "/ran", "w").write(os.environ["AUTODEBUG_RD_PROGRAM"])
+        write({"progress": ["0.5 s captured frame 20"], "done": True, "api": "Vulkan", "capture": "/captures/x.rdc",
+               "frame": 20, "action_count": 1, "actions": [], "messages": []})
+        sys.exit(0)
     if op == "summary":
         write({"progress": ["0.1 s replay opened"], "done": True, "api": "Vulkan", "action_count": 2,
                "actions": [{"event": 11, "name": "vkCmdDraw()", "depth": 0, "draw": True, "dispatch": False}],
@@ -40,19 +45,25 @@ FAKE = textwrap.dedent("""
 """)
 
 
+def install_fake(root: Path) -> Path:
+    """A fake qrenderdoc in `root` (a .cmd on Windows), returning its path."""
+    (root / "fake_qrenderdoc.py").write_text(FAKE, encoding="utf-8")
+    if os.name == "nt":
+        program = root / "qrenderdoc.cmd"
+        program.write_text(f'@"{sys.executable}" "{root / "fake_qrenderdoc.py"}" %*\n', encoding="utf-8")
+    else:
+        program = root / "qrenderdoc"
+        program.write_text(f"#!{sys.executable}\n" + FAKE, encoding="utf-8")
+        program.chmod(0o755)
+    return program
+
+
 class FakeRenderDoc(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
-        (root / "fake_qrenderdoc.py").write_text(FAKE, encoding="utf-8")
-        if os.name == "nt":
-            program = root / "qrenderdoc.cmd"
-            program.write_text(f'@"{sys.executable}" "{root / "fake_qrenderdoc.py"}" %*\n', encoding="utf-8")
-        else:
-            program = root / "qrenderdoc"
-            program.write_text(f"#!{sys.executable}\n" + FAKE, encoding="utf-8")
-            program.chmod(0o755)
+        program = install_fake(root)
         self.capture = root / "frame.rdc"
         self.capture.write_bytes(b"RDOC")
         self.env = {"AUTODEBUG_QRENDERDOC": str(program), "DISPLAY": os.environ.get("DISPLAY", ":0")}
