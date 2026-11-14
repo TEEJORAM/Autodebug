@@ -158,6 +158,52 @@ class InProcess(ServiceTest):
         self.assertNotEqual(replacement["pid"], os.getpid())  # a new background service took over
         self.assertEqual(replacement["code"], hub.code_id())
 
+    def test_clients_arriving_together_start_one_service(self):
+        # Two MCP servers (say Cursor's and Visual Studio's) that find no service at the same moment. Each client's
+        # first look finds nothing, as when it looks just before the service is up: a client that then claimed the
+        # start after the first starter released it would start a second service.
+        started = []
+        real_start, real_ping = hub._start_process, hub._ping
+        looked = set()
+
+        def first_look_finds_nothing(info):
+            if threading.get_ident() not in looked:
+                looked.add(threading.get_ident())
+                return None
+            return real_ping(info)
+
+        hub._start_process = lambda: started.append(1) or real_start()
+        hub._ping = first_look_finds_nothing
+        self.addCleanup(setattr, hub, "_start_process", real_start)
+        self.addCleanup(setattr, hub, "_ping", real_ping)
+        results = []
+        clients = [threading.Thread(target=lambda: results.append(hub.connect_service()["pid"])) for _ in range(8)]
+        for index, client in enumerate(clients):
+            client.start()
+            if index == 3:
+                time.sleep(0.5)  # the rest arrive after the first service is up and its claim released
+        for client in clients:
+            client.join(30)
+        self.assertEqual(len(started), 1, "only one client starts the service")
+        self.assertEqual(len(set(results)), 1, "every client reaches that same service")
+        self.assertFalse(hub._starting_file().exists())
+
+    def test_a_claim_left_by_a_dead_client_is_taken_over(self):
+        hub._starting_file().parent.mkdir(parents=True, exist_ok=True)
+        hub._starting_file().touch()
+        old = time.time() - hub.START_CLAIM_SECONDS - 5
+        os.utime(hub._starting_file(), (old, old))
+        self.assertTrue(hub._ping(hub.connect_service()))
+
+    def test_a_service_whose_process_ended_is_not_probed(self):
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait()
+        info = {"port": 9, "token": "0" * 48, "pid": child.pid}
+        real_request = hub._request
+        hub._request = lambda *a, **k: self.fail("a service whose process ended must not be probed")
+        self.addCleanup(setattr, hub, "_request", real_request)
+        self.assertIsNone(hub._ping(info))
+
     def test_an_open_session_keeps_the_service(self):
         service = self.serve(idle_seconds=0.3)
         result, _ = hub.call("start_session", {"launch_configuration": "Debug tests", "goal": "x", "wait_seconds": 0,

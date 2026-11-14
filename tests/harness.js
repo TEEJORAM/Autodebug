@@ -72,7 +72,10 @@ class DapSession {
       debugpy: [process.env.HARNESS_DEBUGPY, ['-m', 'debugpy.adapter']],
       fake: [process.env.HARNESS_PYTHON || 'python3', [path.join(__dirname, 'fake_adapter.py'), workspace]],
     }[this.kind];
-    const env = launcher ? { ...process.env, HARNESS_LAUNCHER: '1' } : process.env;
+    const env = launcher ? { ...process.env, HARNESS_LAUNCHER: '1' } : { ...process.env };
+    // gdb is a system program built against the system's Python: a test runner's own Python library on
+    // LD_LIBRARY_PATH (CI's setup-python) of the same version would be loaded instead and break gdb's Python.
+    if (this.kind === 'gdb') delete env.LD_LIBRARY_PATH;
     this.adapter = childProcess.spawn(program, args, { stdio: ['pipe', 'pipe', 'inherit'], env });
     this.adapter.stdout.on('data', (chunk) => this.receive(chunk));
     // Writing to an adapter that has just exited (a disconnect after the attach's own disconnect) fails with EPIPE;
@@ -145,10 +148,14 @@ class DapSession {
       supportsMemoryReferences: true, supportsProgressReporting: true, supportsStartDebuggingRequest: true,
     });
     if (this.kind === 'gdb') {
+      // Like VS Code: configurationDone does not wait for the launch response. gdb 16 and later answer launch
+      // only after configurationDone (gdb NEWS: launch "will not take effect (or send a response) until after the
+      // configurationDone request has been sent"); gdb 15 answers at once. Waiting for it first hangs on 16+.
       await this.initialized;
       await this.sendBreakpoints();
-      await this.request('launch', { request: 'launch', program: this.configuration.program, cwd: this.configuration.cwd, args: this.configuration.args || [] });
+      const launched = this.request('launch', { request: 'launch', program: this.configuration.program, cwd: this.configuration.cwd, args: this.configuration.args || [] });
       await this.request('configurationDone', {});
+      await launched;
     } else {
       const args = this.kind === 'debugpy' ? { ...this.configuration, python: process.env.HARNESS_DEBUGPY } : this.configuration;
       const launched = this.request(this.configuration.request === 'attach' ? 'attach' : 'launch', args);

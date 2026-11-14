@@ -24,11 +24,12 @@ def _gdb_major() -> int:
 
 
 def _gdb_python_works() -> bool:
-    """gdb's debug adapter is written in Python inside gdb. It breaks when gdb loads another Python's library, as on
-    a CI machine whose LD_LIBRARY_PATH points at a Python of the same version as gdb's."""
+    """gdb's debug adapter is written in Python inside gdb. Checked the way the harness starts gdb: without
+    LD_LIBRARY_PATH, which on a CI machine can point at a test runner's Python of the same version as gdb's."""
+    env = {k: v for k, v in os.environ.items() if k != "LD_LIBRARY_PATH"}
     try:
         done = subprocess.run([shutil.which("gdb") or "gdb", "-nx", "-batch", "-ex", "python import struct"],
-                              capture_output=True, text=True, timeout=20)
+                              capture_output=True, text=True, timeout=20, env=env)
     except (OSError, subprocess.SubprocessError):
         return False
     return done.returncode == 0 and "Error" not in done.stderr + done.stdout
