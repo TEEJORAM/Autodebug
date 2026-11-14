@@ -326,6 +326,31 @@ class Debugger:
                                f"(ide={preferred}).")
         return result
 
+    def problems(self, workspace_folder: str | None = None, ide: str | None = None, severity: str = "error",
+                 file: str | None = None, limit: int = 50) -> dict:
+        """The IDE's compiler and linter problems (VS Code and Cursor: Problems; Visual Studio: Error List and the
+        end of the Build pane). Runs nothing, so it needs no approval."""
+        try:
+            window = self._window(workspace_folder, ide)
+        except DebugError as exc:
+            preferred = None if ide else preferred_ide()
+            windows = matching(self._find_windows(), workspace_folder, ide)
+            chosen = [w for w in windows if w.ide == preferred]
+            if exc.code != "AMBIGUOUS_WINDOW" or len(chosen) != 1:
+                raise
+            window = chosen[0]
+        connection = self._connect(window)
+        try:
+            result = connection.call("problems", {"folder": workspace_folder, "severity": severity, "file": file,
+                                                  "limit": limit})
+        finally:
+            connection.close()
+        result = {"ide": window.ide, **result}
+        result["next"] = ("No problems at this severity." if not result["problems"] else
+                          "These come from the IDE's compiler and linters. Fix build errors before start_session; "
+                          "they do not prove a runtime root cause.")
+        return result
+
     def open_ide(self, ide: str, path: str, wait_seconds: float = 45) -> dict:
         """Open the solution or folder in the IDE once and wait until its Autodebug extension answers."""
         from autodebug import ide_launch

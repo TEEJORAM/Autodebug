@@ -64,6 +64,13 @@ namespace AutoDebug
 
         void CancelBuild();
 
+        /// <summary>The Error List's entries: {file, line, column, severity (error, warning, information), message,
+        /// source, code, project}.</summary>
+        IList<Dictionary<string, object>> Problems();
+
+        /// <summary>The last <paramref name="lines"/> lines of the Output window's Build pane (empty if none).</summary>
+        IList<string> BuildOutput(int lines);
+
         /// <summary>Whether Visual Studio is debugging (or paused in) a program now, a session the developer started.</summary>
         bool Debugging();
 

@@ -23,6 +23,7 @@ namespace AutoDebug
         public const int Protocol = 4;
         public const int MaxEvents = 5000;
         public const int MaxConfig = 4000;
+        public const int MaxProblems = 500;
         public const int ApprovalSeconds = 120;
         // The only debugger requests the server may send: they read state or move the program. None evaluates an
         // expression or changes a value.
@@ -33,7 +34,7 @@ namespace AutoDebug
             "reverseContinue" };
         static readonly HashSet<string> Steps = new HashSet<string> { "next", "stepIn", "stepOut", "stepBack" };
         /// <summary>What this relay can do beyond protocol 4's first version; the server checks it.</summary>
-        public static readonly string[] Features = { "breakpoint_options", "inspection" };
+        public static readonly string[] Features = { "breakpoint_options", "inspection", "problems" };
         static readonly System.Text.RegularExpressions.Regex Hit =
             new System.Text.RegularExpressions.Regex(@"^\s*(>=|<=|==|>|<|%)?\s*\d{1,9}\s*$");
         static readonly System.Text.RegularExpressions.Regex Placeholder =
@@ -154,6 +155,7 @@ namespace AutoDebug
                     lock (sync) own = session == null ? new List<object>() : session.Marks.Select(m => m.Handle).Where(h => h != null).ToList();
                     return Json.Make("breakpoints", backend.EditorBreakpoints(own).Cast<object>().ToList());
                 case "notify": return Notify(args);
+                case "problems": return Problems(args);
                 case "screenshot": return Screenshot(args);
                 case "stop": End(Json.Str(args, "reason") ?? "stopped by the agent"); return Json.Make();
                 default: throw Fail("BAD_REQUEST", $"unknown operation {op}");
@@ -656,6 +658,17 @@ namespace AutoDebug
                 throw Fail("IDE_ERROR", inner.Message);
             }
 #pragma warning restore VSTHRD002
+        }
+
+        // The Error List and the end of the Build pane, for files in the folder. Reading them runs nothing.
+        object Problems(Dictionary<string, object> args)
+        {
+            var root = Folder(Json.Str(args, "folder"));
+            var inside = backend.Problems()
+                .Where(p => Json.Str(p, "file") is string file && Within(root, file))
+                .Take(MaxProblems).Cast<object>().ToList();
+            return Json.Make("problems", inside, "more", inside.Count >= MaxProblems,
+                "build_output", backend.BuildOutput(60).Cast<object>().ToList());
         }
 
         object Notify(Dictionary<string, object> args)

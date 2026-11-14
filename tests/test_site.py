@@ -44,6 +44,18 @@ class Site(unittest.TestCase):
             self.assertNotIn("github.com/teejoram", text.lower(), page.name)
         self.assertNotIn("teejoram", (ROOT / "pyproject.toml").read_text(encoding="utf-8").lower())
 
+    def test_the_tool_counts_match_the_server(self):
+        from autodebug.mcp_server import TOOLS
+
+        page = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+        self.assertIn(f"<h3 id=\"tools\">{len(TOOLS)} tools in every IDE</h3>", page)
+        self.assertEqual(re.findall(r'<td class="n">(\d+)</td>', page), [str(len(TOOLS))] * 3)
+        groups = re.search(r'<table class="ref tool-groups">(.*?)</table>', page, re.S).group(1)
+        listed = re.findall(r"<code>(\w+)</code>", groups)
+        self.assertEqual(sorted(listed), sorted(TOOLS), "every tool is listed once in the groups")
+        counts = [int(n) for n in re.findall(r'<span class="n">(\d+)</span>', groups)]
+        self.assertEqual(sum(counts), len(TOOLS))
+
 
 if __name__ == "__main__":
     unittest.main()

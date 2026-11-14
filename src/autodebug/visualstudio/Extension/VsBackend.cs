@@ -277,6 +277,45 @@ namespace AutoDebug.VisualStudio
 
         // -- breakpoints ------------------------------------------------------------------------
 
+        // -- problems: the Error List and the Build pane (reading them runs nothing) -----------------
+
+        public IList<Dictionary<string, object>> Problems() => OnMain(() =>
+        {
+            var found = new List<Dictionary<string, object>>();
+            // The entries the Error List shows, under its own filters (Build + IntelliSense, scope).
+            var items = ((ErrorList)dte.ToolWindows.ErrorList).ErrorItems;
+            for (var i = 1; i <= items.Count && found.Count < 2000; i++)
+            {
+                var item = items.Item(i);
+                string file;
+                try { file = item.FileName; } catch (COMException) { continue; }
+                if (string.IsNullOrEmpty(file)) continue;
+                var level = item.ErrorLevel;
+                found.Add(Json.Make(
+                    "file", file, "line", (long)item.Line, "column", (long)Math.Max(item.Column, 1),
+                    "severity", level == vsBuildErrorLevel.vsBuildErrorLevelHigh ? "error"
+                        : level == vsBuildErrorLevel.vsBuildErrorLevelMedium ? "warning" : "information",
+                    "message", Clip(item.Description, 1000), "source", "Visual Studio", "code", "",
+                    "project", Clip(item.Project, 200)));
+            }
+            return (IList<Dictionary<string, object>>)found;
+        });
+
+        public IList<string> BuildOutput(int lines) => OnMain(() =>
+        {
+            foreach (OutputWindowPane pane in dte.ToolWindows.OutputWindow.OutputWindowPanes)
+            {
+                if (pane.Name != "Build") continue;
+                var document = pane.TextDocument;
+                var text = document.StartPoint.CreateEditPoint().GetText(document.EndPoint);
+                var all = text.Replace("\r\n", "\n").Split('\n').Where(l => l.Trim().Length > 0).ToList();
+                return (IList<string>)all.Skip(Math.Max(0, all.Count - lines)).Select(l => Clip(l, 500)).ToList();
+            }
+            return (IList<string>)new List<string>();
+        });
+
+        static string Clip(string text, int max) => text == null ? "" : text.Length <= max ? text : text.Substring(0, max);
+
         public bool Debugging() => OnMain(() => dte.Debugger.CurrentMode != dbgDebugMode.dbgDesignMode);
 
         public object AddBreakpoint(string file, int line, BreakpointOptions options) => OnMain(() =>
