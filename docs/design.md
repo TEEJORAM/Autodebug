@@ -153,6 +153,7 @@ an agent waits longer for the Approve click by calling `wait` again.
 |---|---|
 | `list_targets` | IDE windows (with `ide`: cursor, vscode or visualstudio), their folders, launch configurations (program and module separately, each with its `build` type and `start_with`: the exact `ide`, name and folder to pass) and build tasks. `ide` limits it to one IDE |
 | `open_ide` | Open a solution or project folder in the IDE when no window has it, and wait until Autodebug answers there (see "Opening the IDE") |
+| `problems` | The IDE's compiler and linter problems for a folder, without a session and without running anything: VS Code and Cursor's Problems (`vscode.languages.getDiagnostics`, every diagnostic source such as language servers and task problem matchers), Visual Studio's Error List entries (as its filters show them) and the last 60 lines of its Build pane. `severity` (error by default, then warning, information, hint), `file` (part of the path), `limit` (≤ 200). Files outside the folder are left out; text is redacted like values. A relay without the `problems` feature fails with `OLD_EXTENSION` |
 | `start_session` | Ask the developer to approve, then build, set breakpoints, launch or attach; waits for the first stop. `ide` and `workspace_folder` pick the window when several are open. `args` replaces the program's arguments for this run; `ticket` names the issue it is for; `test` runs one test (see "One test") |
 | `reproduce` | Before debugging a reported bug: one approved run with no breakpoints, to its end; returns the exit code and last output lines, and tells the agent to compare them with the ticket's `symptom` |
 | `wait` | Wait for the session to change state. `ask_developer` shows an information message; it is not an approval. It is shown only once the program runs (approved, built, started) with the agent's breakpoints in place: the call waits for that within its timeout (else `ask_note` says it was not shown yet), waits up to 2 s for the breakpoints to bind and lists those that did not (`unbound`), and is refused while the agent has no stopping breakpoint or watchpoint (a `reproduce` run may ask without) |
@@ -320,7 +321,8 @@ Connection file `<state>/bridges/<window>.json` (`%LOCALAPPDATA%\autodebug`,
 0600 where the OS supports it:
 `{"protocol": 4, "port", "token", "window", "ide", "folders", "version"}`.
 Newer relays add `features` to `info`: `breakpoint_options` (hit counts, log
-points, columns), `inspection` (the requests below) and, in VS Code and Cursor,
+points, columns), `inspection` (the requests below), `problems` (the `problems`
+op) and, in VS Code and Cursor,
 `child_sessions`.
 
 Finding windows: the window name ends with the process that wrote the file (the
@@ -343,6 +345,7 @@ token closes the connection. Then one JSON object per line:
 | `breakpoints` | `add`, `add_functions`, `remove` (ids) | `breakpoint_ids`, `function_ids` |
 | `editor_breakpoints` | – | the developer's own enabled breakpoints: {file, line} or {function} |
 | `notify` | `text` (≤ 300) | – (a non-modal note to the developer; never an approval) |
+| `problems` | `folder` | `problems` [{file (absolute), line, column, severity, message, source, code, project}] in that folder (at most 500), `more`; Visual Studio adds `build_output` (the Build pane's last 60 lines) |
 | `screenshot` | `file` (absolute `.png` under `<folder>/autodebug-reports/screenshots`) | `file`, `width`, `height`, `variables_window`. Visual Studio only, and only when the session was approved with `screenshots` (`NOT_APPROVED` otherwise) |
 | `stop` | `reason` | – (ends the session; attach sessions detach first) |
 

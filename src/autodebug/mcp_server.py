@@ -119,6 +119,14 @@ TOOLS = {
     "list_targets": ("List IDE windows running Autodebug, with their launch configurations (build type, whether the "
                      "program is built, start_with) and build tasks.",
                      _schema({"workspace_folder": _FOLDER, "ide": _IDE})),
+    "problems": ("The IDE's compiler and linter errors for a folder: Problems in VS Code and Cursor, the Error List "
+                 "and the end of the Build pane in Visual Studio. Use it when a build fails. Runs nothing.",
+                 _schema({"workspace_folder": _FOLDER, "ide": _IDE,
+                          "severity": {"type": "string", "enum": ["error", "warning", "information", "hint"],
+                                       "default": "error", "description": "the least severe kind to include"},
+                          "file": {"type": "string", "maxLength": 500,
+                                   "description": "only files whose path contains this text"},
+                          "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}})),
     "open_ide": (
         "Open a solution (.sln) or project folder in the IDE when no window has it, and wait until Autodebug answers "
         "there. Reuses an open window; while the IDE loads, calling it again waits instead of opening another copy. "

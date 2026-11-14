@@ -213,6 +213,17 @@ class Session(VisualStudioTest):
         self.assertEqual(json.loads(self.expect("DISCONNECT")), {"detach": False})
 
 
+class Problems(VisualStudioTest):
+    def test_error_list_and_build_pane(self):
+        result = self.debugger.problems()
+        self.assertEqual(result["ide"], "visualstudio")
+        self.assertEqual(result["problems"], [{"file": "cpp/geometry.cpp", "line": 16, "column": 9, "severity": "error",
+                                               "message": "C2065: 'totl': undeclared identifier",
+                                               "source": "Visual Studio"}])
+        self.assertIn("1>geometry.cpp(16,9): error C2065: 'totl': undeclared identifier", result["build_output"])
+        self.assertEqual(self.debugger.problems(severity="warning")["count"], 2, "the entry outside the folder is left out")
+
+
 class BreakpointsBeforeApprove(VisualStudioTest):
     def test_breakpoints_are_shown_while_the_dialog_is_open(self):
         self.start()

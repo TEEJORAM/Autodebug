@@ -206,6 +206,19 @@ const vscode = {
     workspaceFolders: [{ uri: { fsPath: workspace }, name: path.basename(workspace) }],
     getConfiguration: (section) => ({ get: (key) => readJson(section === 'launch' ? 'launch.json' : 'tasks.json')[key] }),
   },
+  // Problems: two in the workspace (an error with a code object, a warning) and one outside it.
+  DiagnosticSeverity: { Error: 0, Warning: 1, Information: 2, Hint: 3 },
+  languages: {
+    getDiagnostics: () => [
+      [{ fsPath: path.join(workspace, 'geometry.py') }, [
+        { range: { start: { line: 14, character: 4 } }, message: 'name "totl" is not defined', severity: 0, source: 'Pylance', code: { value: 'reportUndefinedVariable' } },
+        { range: { start: { line: 2, character: 0 } }, message: 'unused import os', severity: 1, source: 'Ruff', code: 'F401' },
+      ]],
+      [{ fsPath: path.join(path.dirname(workspace), 'elsewhere.py') }, [
+        { range: { start: { line: 0, character: 0 } }, message: 'outside the folder', severity: 0, source: 'x' },
+      ]],
+    ],
+  },
   window: {
     showWarningMessage: (message, options, ...items) => new Promise((resolve) => {
       say(`DIALOG ${JSON.stringify({ message, detail: options.detail, modal: options.modal, items })}`);

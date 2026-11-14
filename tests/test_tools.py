@@ -146,6 +146,13 @@ class Targets(ToolsTest):
         self.assertCode("NO_WINDOW", self.debugger.list_targets, ide="vscode")
 
 
+class ProblemsOnAnOlderExtension(ToolsTest):
+    def test_an_extension_without_problems_says_how_to_update(self):
+        error = self.assertCode("OLD_EXTENSION", self.debugger.problems)
+        self.assertIn("cannot list problems yet", error.message)
+        self.assertIn("autodebug setup cursor", error.message)
+
+
 class OldExtension(ToolsTest):
     def setUp(self):
         super().setUp()

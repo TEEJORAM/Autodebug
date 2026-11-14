@@ -149,6 +149,24 @@ namespace AutoDebug.Harness
             Say("LOG build terminated");
         }
 
+        // An Error List as a C++ build that failed would leave it, with one entry outside the open folder.
+        public IList<Dictionary<string, object>> Problems() => new List<Dictionary<string, object>>
+        {
+            Json.Make("file", Path.Combine(workspace, "cpp", "geometry.cpp"), "line", 16L, "column", 9L, "severity", "error",
+                "message", "C2065: 'totl': undeclared identifier", "source", "Visual Studio", "code", "", "project", "geometry"),
+            Json.Make("file", Path.Combine(workspace, "cpp", "geometry.cpp"), "line", 4L, "column", 1L, "severity", "warning",
+                "message", "C4100: 'unused': unreferenced formal parameter", "source", "Visual Studio", "code", "", "project", "geometry"),
+            Json.Make("file", Path.Combine(Path.GetTempPath(), "elsewhere.cpp"), "line", 1L, "column", 1L, "severity", "error",
+                "message", "outside the folder", "source", "Visual Studio", "code", "", "project", "other"),
+        };
+
+        public IList<string> BuildOutput(int lines) => new List<string>
+        {
+            "1>------ Build started: Project: geometry, Configuration: Debug x64 ------",
+            "1>geometry.cpp(16,9): error C2065: 'totl': undeclared identifier",
+            "========== Build: 0 succeeded, 1 failed, 0 up-to-date, 0 skipped ==========",
+        };
+
         public bool Debugging() => Flag("HARNESS_DEBUGGING") == "1";
 
         public object AddBreakpoint(string file, int line, BreakpointOptions options)

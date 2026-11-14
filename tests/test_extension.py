@@ -265,6 +265,20 @@ class Extension(HarnessTest):
         self.assertEqual(discover(self.bridges), [])
 
 
+class Problems(HarnessTest):
+    def test_problems_of_the_folder_without_a_session(self):
+        errors = self.debugger.problems()
+        self.assertEqual(errors["ide"], "cursor")
+        self.assertEqual(errors["problems"], [{"file": "geometry.py", "line": 15, "column": 5, "severity": "error",
+                                               "message": 'name "totl" is not defined', "source": "Pylance",
+                                               "code": "reportUndefinedVariable"}])
+        everything = self.debugger.problems(severity="warning")
+        self.assertEqual([p["severity"] for p in everything["problems"]], ["error", "warning"])
+        self.assertNotIn("outside the folder", json.dumps(everything), "only files in the workspace folder")
+        self.assertEqual(self.debugger.problems(severity="warning", file="nothing.py")["problems"], [])
+        self.assertIsNone(self.debugger.connection, "reading problems starts no session")
+
+
 class ApprovalDetail(HarnessTest):
     def _launch(self, config, tasks=()):
         folder = self.workspace / ".vscode"

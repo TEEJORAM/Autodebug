@@ -17,6 +17,7 @@ const MAX_LINE = 1024 * 1024;
 const APPROVAL_SECONDS = 120;
 const MAX_EVENTS = 5000;
 const MAX_CONFIG = 4000;
+const MAX_PROBLEMS = 500;
 // The only debugger requests the server may send. They read state or move the program; none evaluates an
 // expression or changes a value (no evaluate, setVariable, setExpression, writeMemory, goto or restartFrame).
 const DAP_COMMANDS = new Set(['threads', 'stackTrace', 'scopes', 'variables', 'next', 'stepIn', 'stepOut', 'continue',
@@ -25,7 +26,7 @@ const DAP_COMMANDS = new Set(['threads', 'stackTrace', 'scopes', 'variables', 'n
   'reverseContinue']);
 const STEPS = new Set(['next', 'stepIn', 'stepOut', 'stepBack']);
 // What this relay can do beyond protocol 4's first version; the server checks it.
-const FEATURES = ['breakpoint_options', 'child_sessions', 'inspection'];
+const FEATURES = ['breakpoint_options', 'child_sessions', 'inspection', 'problems'];
 const HIT = /^\s*(>=|<=|==|>|<|%)?\s*\d{1,9}\s*$/;
 const VARIABLE_PATH = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|->[A-Za-z_$][\w$]*|\[\d{1,9}\])*$/;
 // One token of a condition; the same grammar as the server's check_condition (checks.py) and Gate.cs.
@@ -244,6 +245,7 @@ class Relay {
       case 'dap': return this.dap(args);
       case 'breakpoints': return this.breakpoints(args);
       case 'editor_breakpoints': return { breakpoints: this.editorBreakpoints() };
+      case 'problems': return this.problems(args);
       case 'notify': return this.notify(args);
       case 'stop': return this.end(String(args.reason || 'stopped by the agent')).then(() => ({}));
       default: return fail('BAD_REQUEST', `unknown operation ${op}`);
@@ -251,6 +253,28 @@ class Relay {
   }
 
   // ---- workspace -------------------------------------------------------------
+
+  // The IDE's Problems: diagnostics from compilers, linters and task problem matchers, for files in the folder.
+  // Reading them runs nothing.
+  problems(args) {
+    const root = this.workspaceFolder(args.folder).uri.fsPath;
+    const severities = ['error', 'warning', 'information', 'hint'];
+    const out = [];
+    for (const [uri, diagnostics] of this.vscode.languages.getDiagnostics()) {
+      const file = uri && uri.fsPath;
+      if (!file || !within(root, file)) continue;
+      for (const d of diagnostics) {
+        const code = d.code && typeof d.code === 'object' ? d.code.value : d.code;
+        out.push({
+          file, line: d.range.start.line + 1, column: d.range.start.character + 1,
+          severity: severities[d.severity] || 'error', message: String(d.message).slice(0, 1000),
+          source: d.source ? String(d.source).slice(0, 100) : '', code: code === undefined ? '' : String(code).slice(0, 100),
+        });
+        if (out.length >= MAX_PROBLEMS) return { problems: out, more: true };
+      }
+    }
+    return { problems: out, more: false };
+  }
 
   workspaceFolder(fsPath) {
     const all = this.vscode.workspace.workspaceFolders || [];

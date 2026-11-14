@@ -103,6 +103,7 @@ class Session(Values):
             "continue": self.resume, "pause": self.pause, "breakpoints": self.breakpoints, "stop": self.stop,
             "screenshot": self.screenshot, "watch": self.watch, "modules": self.modules, "source": self.source,
             "disassemble": self.disassemble, "memory": self.memory, "locations": self.locations,
+            "problems": self.problems,
         }.get(op)
         if handler is None:
             raise DebugError("BAD_REQUEST", f"unknown operation {op}")
@@ -129,6 +130,43 @@ class Session(Values):
         tasks = [{"label": t.get("label"), "command": " ".join(str(p) for p in [t.get("command"), *(t.get("args") or [])] if p)}
                  for t in ws.get("tasks", [])]
         return {"folder": ws.get("folder"), "launch": launch, "tasks": tasks}
+
+    # -- problems: the IDE's own list of compiler and linter errors -------------------------
+
+    def problems(self, args: dict) -> dict:
+        """The IDE's Problems (VS Code, Cursor) or Error List and Build pane (Visual Studio) for one folder. Reading
+        them runs nothing, so no approval is needed."""
+        info = self._relay("info")
+        if "problems" not in (info.get("features") or []):
+            ide = IDE_NAMES.get(self.window.ide, self.window.ide)
+            raise DebugError("OLD_EXTENSION", f"this {ide} window's Autodebug extension cannot list problems yet. "
+                                              f"Ask the developer to run `autodebug setup {self.window.ide}` and "
+                                              "reload the window (Visual Studio: restart it).")
+        folder = self._relay("workspace", {"folder": args.get("folder")})["folder"]
+        answer = self._relay("problems", {"folder": folder})
+        rank = {"error": 0, "warning": 1, "information": 2, "hint": 3}
+        worst = rank.get(args.get("severity") or "error", 0)
+        wanted = str(args.get("file") or "").replace("\\", "/").lower()
+        found = []
+        for p in answer.get("problems") or []:
+            if rank.get(p.get("severity"), 0) > worst:
+                continue
+            name = self._relative(str(p.get("file") or ""), folder) or ""
+            if wanted and wanted not in name.replace("\\", "/").lower():
+                continue
+            found.append({"file": name, "line": p.get("line"), "column": p.get("column"),
+                          "severity": p.get("severity") or "error", "message": clean_text(p.get("message"), 1000),
+                          **({"source": clean_text(p["source"], 100)} if p.get("source") else {}),
+                          **({"code": clean_text(p["code"], 100)} if p.get("code") else {})})
+        found.sort(key=lambda p: (rank.get(p["severity"], 0), p["file"], p["line"] or 0))
+        limit = max(1, min(int(args.get("limit") or 50), 200))
+        result = {"folder": folder, "problems": found[:limit], "count": len(found)}
+        if len(found) > limit or answer.get("more"):
+            result["more"] = True
+        output = [clean_text(line, 500) for line in answer.get("build_output") or []]
+        if output:
+            result["build_output"] = output
+        return result
 
     # -- start: everything is checked here, then the extension asks the developer ---------------
 
@@ -384,7 +422,7 @@ class Session(Values):
         else:
             minutes = event.get("minutes") or 0
             message = {"timeout": f"the build took longer than {minutes} minute{'' if minutes == 1 else 's'}",
-                       "unavailable": f'task "{task}" is not available'}.get(status, "see the task output in the terminal")
+                       "unavailable": f'task "{task}" is not available'}.get(status, "call problems to read the compiler errors")
             self._changed(status="build_failed", exit_code=event.get("exit_code"), message=message,
                           build={"task": task, "status": "failed", "exit_code": event.get("exit_code")})
 
