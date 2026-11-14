@@ -12,6 +12,7 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from autodebug import report
 from autodebug.build import describe
@@ -349,6 +350,28 @@ class Debugger:
         result["next"] = ("No problems at this severity." if not result["problems"] else
                           "These come from the IDE's compiler and linters. Fix build errors before start_session; "
                           "they do not prove a runtime root cause.")
+        return result
+
+    def renderdoc(self, capture: str, op: str = "summary", event: int | None = None, x: int | None = None,
+                  y: int | None = None, vertex: int | None = None, debug_shader: bool = False,
+                  filter: str | None = None, limit: int = 100, timeout_seconds: float = 120) -> dict:
+        """Read a RenderDoc capture (.rdc) of one GPU frame: replays it in RenderDoc, runs none of the program."""
+        from autodebug import gpu
+
+        result = gpu.analyse(capture, op=op, event=event, x=x, y=y, vertex=vertex, debug_shader=debug_shader,
+                             name_filter=filter, limit=limit, timeout_seconds=timeout_seconds)
+        where = f"event {event}" if event is not None else Path(capture).name
+        detail = {"summary": f"{result.get('action_count', 0)} actions, {len(result.get('messages') or [])} API messages",
+                  "event": "pipeline state", "vertex": f"vertex {vertex or 0} shader: "
+                  f"{(result.get('debug') or {}).get('steps', 0)} steps",
+                  "pixel": f"pixel {(result.get('pixel') or {}).get('x')},{(result.get('pixel') or {}).get('y')}: "
+                  f"{len((result.get('pixel') or {}).get('history') or [])} writes"}[op]
+        self._log("renderdoc", where, detail)
+        result["next"] = {"summary": "Pick a draw (draw: true) and read it with op event, pixel (x, y) or vertex.",
+                          "event": "op pixel shows which events wrote a pixel; debug_shader steps its pixel shader.",
+                          "pixel": "Each write shows the colour before and after. debug_shader=true steps the "
+                                   "pixel shader for this pixel.",
+                          "vertex": "Each step lists the shader variables it changed."}[op]
         return result
 
     def open_ide(self, ide: str, path: str, wait_seconds: float = 45) -> dict:

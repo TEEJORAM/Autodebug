@@ -127,6 +127,22 @@ TOOLS = {
                           "file": {"type": "string", "maxLength": 500,
                                    "description": "only files whose path contains this text"},
                           "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}})),
+    "renderdoc": (
+        "Read a RenderDoc capture (.rdc) of one GPU frame, for rendering bugs. It replays the capture inside RenderDoc "
+        "and runs none of the program, so it needs no approval. op summary: the frame's actions (draws, dispatches) "
+        "with event ids, and the API's validation messages. op event: the pipeline at that event (shaders, targets, "
+        "viewport). op pixel: which events wrote pixel x, y and the colour before and after each; debug_shader steps "
+        "its pixel shader. op vertex: steps the vertex shader for one vertex. Needs RenderDoc installed.",
+        _schema({"capture": {"type": "string", "maxLength": 1000, "description": "absolute path to the .rdc file"},
+                 "op": {"type": "string", "enum": ["summary", "event", "pixel", "vertex"], "default": "summary"},
+                 "event": {"type": "integer", "minimum": 0, "description": "an event id from op summary"},
+                 "x": {"type": "integer", "minimum": 0}, "y": {"type": "integer", "minimum": 0},
+                 "vertex": {"type": "integer", "minimum": 0},
+                 "debug_shader": {"type": "boolean", "default": False},
+                 "filter": {"type": "string", "maxLength": 200, "description": "op summary: action names containing this"},
+                 "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100},
+                 "timeout_seconds": {"type": "number", "minimum": 5, "maximum": 600, "default": 120}},
+                ("capture",))),
     "open_ide": (
         "Open a solution (.sln) or project folder in the IDE when no window has it, and wait until Autodebug answers "
         "there. Reuses an open window; while the IDE loads, calling it again waits instead of opening another copy. "
