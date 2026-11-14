@@ -28,12 +28,13 @@ import time
 from pathlib import Path
 
 from autodebug import __version__
-from autodebug.connection import state_folder
+from autodebug.connection import process_ended, state_folder
 from autodebug.tools import Debugger
 
 _LOG = logging.getLogger("autodebug")
 IDLE_SECONDS = 30 * 60
 MAX_LINE = 1024 * 1024
+START_CLAIM_SECONDS = 10  # a service is up in a few seconds; an older claim is from a client that died
 CALL_TIMEOUT = 180  # longer than any tool's own wait (55 s) plus the IDE's answer
 _FINISHED = ("ended", "denied", "build_failed", "none")
 
@@ -123,7 +124,9 @@ class Hub:
             return {"result": {"error": "BAD_REQUEST", "message": f"{name}: {problem}"}, "is_error": True}
         self.last_call = time.monotonic()
         with self._tool_lock:
+            began = time.monotonic()
             result, is_error = call_tool(self.debugger, name, arguments)
+            _LOG.info("%s took %.2f s%s", name, time.monotonic() - began, " (error)" if is_error else "")
         self.last_call = time.monotonic()
         return {"result": result, "is_error": is_error}
 
@@ -193,6 +196,8 @@ def _request(info: dict, request: dict, timeout: float) -> dict:
 def _ping(info: dict | None) -> dict | None:
     if not info:
         return None
+    if process_ended(info.get("pid") if isinstance(info.get("pid"), int) else None):
+        return None  # its process is gone: no probe (Windows retries a refused loopback connection for ~2 s)
     try:
         reply = _request(info, {"op": "ping"}, 3)
     except (OSError, ValueError):
@@ -211,6 +216,36 @@ def reap(wait_seconds: float = 0) -> None:
         with contextlib.suppress(subprocess.TimeoutExpired):
             process.wait(wait_seconds)
             _started.remove(process)
+
+
+def _starting_file() -> Path:
+    return state_folder() / "hub.starting"
+
+
+def _claim_start(wait_seconds: float) -> bool:
+    """Whether this client may start the service. Two MCP servers (say Cursor's and Visual Studio's) that find no
+    service at the same moment would each start one; the later one takes over hub.json and the first is left
+    running unreachable. The first client to create hub.starting starts it; the others wait for hub.json. A claim
+    older than the wait is from a client that died and is taken over."""
+    path = _starting_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):  # a second try after removing a stale claim
+        try:
+            os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+            return True
+        except FileExistsError:
+            try:
+                if time.time() - path.stat().st_mtime < wait_seconds:
+                    return False
+                path.unlink()
+            except OSError:
+                return False
+    return False
+
+
+def _release_start() -> None:
+    with contextlib.suppress(OSError):
+        _starting_file().unlink()
 
 
 def _start_process() -> None:
@@ -253,13 +288,20 @@ def connect_service(start: bool = True, wait_seconds: float = 15) -> dict:
         return info
     if not start:
         raise ServiceError("the Autodebug service is not running")
-    _start_process()
-    deadline = time.monotonic() + wait_seconds
-    while time.monotonic() < deadline:
-        info = _read_info()
-        if _ping(info):
-            return info
-        time.sleep(0.1)
+    starter = False
+    try:
+        deadline = time.monotonic() + wait_seconds
+        while time.monotonic() < deadline:
+            if not starter and _claim_start(START_CLAIM_SECONDS):
+                starter = True  # first here, or the client that claimed it is gone
+                _start_process()
+            info = _read_info()
+            if _ping(info):
+                return info
+            time.sleep(0.1)
+    finally:
+        if starter:
+            _release_start()
     raise ServiceError(f"the Autodebug service did not start; see {state_folder() / 'hub.log'}")
 
 

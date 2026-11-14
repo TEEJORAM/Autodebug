@@ -87,6 +87,8 @@ class Session(Values):
         self.features: set[str] = set()
         self.version = 0
         self.cursor = 0
+        self.started_at: float | None = None
+        self.phases: set[str] = set()  # statuses already logged with their time
 
     def close(self) -> None:
         self.connection.close()
@@ -159,6 +161,8 @@ class Session(Values):
         for b, ident in zip(breakpoints, answer.get("breakpoint_ids", []), strict=False):
             b["id"] = ident
         self.cursor = latest
+        self.started_at, self.phases = time.monotonic(), set()
+        _LOG.info("session awaiting approval of %r", launch.get("name"))
         self.s = {
             "status": "awaiting_approval", "reason": None, "location": None, "exit_code": None, "message": None,
             "steps_used": 0, "max_steps": max_steps, "build": None, "thread_id": None, "thread_name": None,
@@ -304,6 +308,12 @@ class Session(Values):
 
     def _changed(self, **changes) -> None:
         if self.s is not None:
+            status = changes.get("status")
+            if status and status not in self.phases and self.started_at is not None:
+                self.phases.add(status)
+                # How long each phase took (the developer's Approve click, the build, the debugger starting, the
+                # first stop), in the service log, so a slow start can be measured rather than guessed at.
+                _LOG.info("session %s after %.1f s", status, time.monotonic() - self.started_at)
             self.s.update(changes)
         self.version += 1
 

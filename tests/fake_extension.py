@@ -35,7 +35,7 @@ class FakeExtension:
         self.folder = Path(folder)
         self.workspace = workspace
         self.ide = ide
-        self.window = f"{ide}-fake-{secrets.token_hex(3)}"
+        self.window = f"{ide}-fake{secrets.token_hex(3)}-{os.getpid()}"  # like the relays: ends with its process
         self.token = secrets.token_hex(32)
         self.build_exit = build_exit
         self.launch = LAUNCH if launch is None else launch

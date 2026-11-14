@@ -61,10 +61,16 @@ So the session does not live in the MCP server process.
   only by the user. Every request carries the token. Tool calls run one at a time.
 - **Started on demand.** The first client that finds no service starts one in the
   background, detached from the caller (on Windows it leaves the IDE's job object
-  when allowed), and waits up to 15 s for `hub.json`. A service of another version
+  when allowed), and waits up to 15 s for `hub.json`. Only one client starts it:
+  the first to create `hub.starting` in the state folder; clients arriving at the
+  same moment (Cursor's and Visual Studio's MCP servers) wait for that service, and
+  a claim older than 10 s, from a client that died, is taken over. A `hub.json`
+  whose process has ended is not probed. A service of another version
   (or of other code, after an update with the same version number: `ping` reports a
   fingerprint of the Python files) is replaced only when no session is open. It exits after 30 minutes without
-  calls while no session is open.
+  calls while no session is open. `hub.log` records how long each tool call took and,
+  for each session, when it reached each status the first time (awaiting approval,
+  starting, building, running, paused, ended), so a slow start can be measured.
 - **Clients.** `autodebug serve` (MCP over stdio) forwards each tool call to the
   service; if the service cannot be started it runs the tools in its own process,
   as before (`serve --direct` forces that). `autodebug run <tool> key=value ...`
@@ -316,6 +322,12 @@ Connection file `<state>/bridges/<window>.json` (`%LOCALAPPDATA%\autodebug`,
 Newer relays add `features` to `info`: `breakpoint_options` (hit counts, log
 points, columns), `inspection` (the requests below) and, in VS Code and Cursor,
 `child_sessions`.
+
+Finding windows: the window name ends with the process that wrote the file (the
+extension host in VS Code and Cursor, `devenv` in Visual Studio). A file whose
+process has ended (an IDE that crashed or was killed) is removed without a
+network probe, because Windows retries a connection to a closed loopback port
+for about 2 seconds; the other windows are probed at the same time, 0.5 s at most.
 
 Autodebug connects to `127.0.0.1:<port>` and sends `{"hello": token}`; a wrong
 token closes the connection. Then one JSON object per line:

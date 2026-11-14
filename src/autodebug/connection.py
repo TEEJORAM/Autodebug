@@ -73,9 +73,13 @@ def _private(path: Path) -> bool:
 
 def discover(folder: Path | None = None) -> list[Window]:
     """Every window whose connection file is valid, private and still reachable, including windows
-    whose extension speaks another protocol version (`Window.current` is False for those)."""
+    whose extension speaks another protocol version (`Window.current` is False for those).
+
+    A file whose window process has ended (an IDE that crashed or was killed) is removed without a network
+    probe: on Windows a connection to a closed loopback port is retried for about 2 seconds, so every such file
+    cost the probe's whole timeout on every lookup. The other windows are probed at the same time."""
     folder = folder or bridges_folder()
-    windows = []
+    candidates = []
     for path in sorted(Path(folder).glob("*.json")) if Path(folder).is_dir() else ():
         try:
             if path.is_symlink() or path.stat().st_size > 65536 or not _private(path):
@@ -87,9 +91,58 @@ def discover(folder: Path | None = None) -> list[Window]:
             continue
         if not re.fullmatch(r"[0-9a-f]{64}", window.token):
             continue
-        if _reachable(window.port):
-            windows.append(window)
-    return windows
+        if process_ended(owner_process(window.window)):
+            with contextlib.suppress(OSError):
+                path.unlink()
+            continue
+        candidates.append(window)
+    reachable = [False] * len(candidates)
+
+    def probe(index: int) -> None:
+        reachable[index] = _reachable(candidates[index].port)
+
+    threads = [threading.Thread(target=probe, args=(i,), daemon=True) for i in range(len(candidates))]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return [w for w, ok in zip(candidates, reachable, strict=True) if ok]
+
+
+def owner_process(window: str) -> int | None:
+    """The process that wrote a connection file: both relays end the window name with it
+    (`cursor-<id>-<extension host pid>`, `visualstudio-<id>-<devenv pid>`)."""
+    match = re.search(r"-(\d{1,10})$", window)
+    return int(match.group(1)) if match else None
+
+
+def process_ended(pid: int | None) -> bool:
+    """True only when `pid` certainly names no running process. Unknown cases count as running, so the
+    window is probed as before."""
+    if not pid or pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return ctypes.get_last_error() == 87  # ERROR_INVALID_PARAMETER: no process has this id
+        try:
+            code = ctypes.c_ulong()
+            if not kernel.GetExitCodeProcess(ctypes.c_void_p(handle), ctypes.byref(code)):
+                return False
+            return code.value != 259  # STILL_ACTIVE
+        finally:
+            kernel.CloseHandle(ctypes.c_void_p(handle))
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False  # it exists (owned by someone else) or cannot be checked
+    return False
 
 
 def _reachable(port: int) -> bool:
