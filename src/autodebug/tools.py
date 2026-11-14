@@ -492,13 +492,16 @@ class Debugger:
         before = self._values()
         path = []
         raw = {}
+        step_into = None
         request = {"kind": kind, "wait_ms": wait_ms, "single_thread": bool(single_thread), "instruction": bool(instruction)}
         for n in range(count):
             if target and n == 0:
                 request["target"] = target
             else:
                 request.pop("target", None)
-            raw = self._call("step", request)["state"]
+            answer = self._call("step", request)
+            raw = answer["state"]
+            step_into = answer.get("step_into") or step_into
             location = raw.get("location")
             if location:
                 path.append(f"{location['file']}:{location['line']}")
@@ -512,6 +515,8 @@ class Debugger:
                   ", ".join(f"{c['name']}: {c['before']} → {c['after']}" for c in changed[:8]))
         result = self._state(raw, quiet=True)
         result["changed"] = changed
+        if step_into:
+            result["step_into"] = step_into
         if len(path) > 1:
             result["path"] = path
         if raw.get("status") == "running":

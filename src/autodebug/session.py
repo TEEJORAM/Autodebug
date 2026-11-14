@@ -1062,6 +1062,8 @@ class Session(Values):
         if target:
             if command != "stepIn":
                 raise DebugError("BAD_REQUEST", "target is for kind into: the call to step into")
+            if not self._caps().get("supportsStepInTargetsRequest"):
+                return self._step_into_function(str(target), args)
             self._need("supportsStepInTargetsRequest", "step into a chosen call")
             frame = self._frame_id({})
             targets = self._dap("stepInTargets", {"frameId": frame}).get("targets") or []
@@ -1073,6 +1075,43 @@ class Session(Values):
             request["targetId"] = chosen.get("id")
         wait_ms = max(0, min(int(args.get("wait_ms") or 15000), 60000))
         return self._move(command, request, wait_ms, step=True)
+
+    def _step_into_function(self, target: str, args: dict) -> dict:
+        """Step into the call of `target` on this line for a debugger without stepInTargets (Visual Studio): a
+        temporary function breakpoint on `target`, then a step over. If the line calls it, the program stops in it;
+        if not, the step ends on the next line as a step over does. Where it stopped is read back, not assumed."""
+        s = self.s
+        if args.get("single_thread") or args.get("instruction"):
+            raise DebugError("BAD_REQUEST", "target cannot be combined with single_thread or instruction here")
+        self._need("supportsFunctionBreakpoints", "step into a chosen call")
+        name = target.strip()
+        if not re.fullmatch(r"[A-Za-z_~][\w~]*(?:(?:::|\.)[A-Za-z_~][\w~]*)*", name):
+            raise DebugError("BAD_REQUEST", "target is the called function's name, such as polygon_area or "
+                                            "Mesh::area (this debugger lists no calls to choose from)")
+        temporary = name not in {f["name"] for f in s["functions"]}
+        if temporary:
+            self.breakpoints({"add_functions": [name]})
+        try:
+            wait_ms = max(0, min(int(args.get("wait_ms") or 15000), 60000))
+            result = self._move("next", {"threadId": s["thread_id"]}, wait_ms, step=True)
+        finally:
+            if temporary and s["status"] not in FINISHED:
+                self.breakpoints({"remove_functions": [name]})
+        result["state"] = self.snapshot()  # without the temporary breakpoint
+        entered = False
+        if s["status"] == "paused":
+            frames = self._dap("stackTrace", {"threadId": s["thread_id"], "startFrame": 0, "levels": 1}).get("stackFrames") or []
+            top = str(frames[0].get("name") or "") if frames else ""
+            short = re.split(r"::|\.", name)[-1]
+            entered = bool(re.search(rf"(^|[^\w]){re.escape(short)}([^\w]|$)", top))
+        result["step_into"] = {
+            "target": name, "entered": entered,
+            "how": "this debugger lists no calls to choose from, so a temporary function breakpoint on the target "
+                   "and a step over were used",
+            **({} if entered else {"note": f"did not stop in {name}: this line does not call it, the name did not "
+                                           "match a function (try Class::method), or it stopped elsewhere first"}),
+        }
+        return result
 
     def resume(self, args: dict) -> dict:
         s = self.current("paused")
