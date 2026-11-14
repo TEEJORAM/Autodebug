@@ -159,18 +159,32 @@ class InProcess(ServiceTest):
         self.assertEqual(replacement["code"], hub.code_id())
 
     def test_clients_arriving_together_start_one_service(self):
-        # Two MCP servers (say Cursor's and Visual Studio's) that find no service at the same moment.
+        # Two MCP servers (say Cursor's and Visual Studio's) that find no service at the same moment. Each client's
+        # first look finds nothing, as when it looks just before the service is up: a client that then claimed the
+        # start after the first starter released it would start a second service.
         started = []
-        real_start = hub._start_process
+        real_start, real_ping = hub._start_process, hub._ping
+        looked = set()
+
+        def first_look_finds_nothing(info):
+            if threading.get_ident() not in looked:
+                looked.add(threading.get_ident())
+                return None
+            return real_ping(info)
+
         hub._start_process = lambda: started.append(1) or real_start()
+        hub._ping = first_look_finds_nothing
         self.addCleanup(setattr, hub, "_start_process", real_start)
+        self.addCleanup(setattr, hub, "_ping", real_ping)
         results = []
-        clients = [threading.Thread(target=lambda: results.append(hub.connect_service()["pid"])) for _ in range(4)]
-        for client in clients:
+        clients = [threading.Thread(target=lambda: results.append(hub.connect_service()["pid"])) for _ in range(8)]
+        for index, client in enumerate(clients):
             client.start()
+            if index == 3:
+                time.sleep(0.5)  # the rest arrive after the first service is up and its claim released
         for client in clients:
             client.join(30)
-        self.assertEqual(len(started), 1, "only the first client starts the service")
+        self.assertEqual(len(started), 1, "only one client starts the service")
         self.assertEqual(len(set(results)), 1, "every client reaches that same service")
         self.assertFalse(hub._starting_file().exists())
 

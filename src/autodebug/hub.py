@@ -292,12 +292,17 @@ def connect_service(start: bool = True, wait_seconds: float = 15) -> dict:
     try:
         deadline = time.monotonic() + wait_seconds
         while time.monotonic() < deadline:
-            if not starter and _claim_start(START_CLAIM_SECONDS):
-                starter = True  # first here, or the client that claimed it is gone
-                _start_process()
             info = _read_info()
             if _ping(info):
                 return info
+            # Claim only after looking: a client that claims first would start a second service the moment the
+            # first starter, its service already up, releases its claim.
+            if not starter and _claim_start(START_CLAIM_SECONDS):
+                starter = True  # first here, or the client that claimed it is gone
+                info = _read_info()
+                if _ping(info):  # it came up between the look and the claim
+                    return info
+                _start_process()
             time.sleep(0.1)
     finally:
         if starter:
