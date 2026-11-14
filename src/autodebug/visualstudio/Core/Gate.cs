@@ -34,7 +34,7 @@ namespace AutoDebug
             "reverseContinue" };
         static readonly HashSet<string> Steps = new HashSet<string> { "next", "stepIn", "stepOut", "stepBack" };
         /// <summary>What this relay can do beyond protocol 4's first version; the server checks it.</summary>
-        public static readonly string[] Features = { "breakpoint_options", "inspection", "problems" };
+        public static readonly string[] Features = { "breakpoint_options", "inspection", "problems", "consent" };
         static readonly System.Text.RegularExpressions.Regex Hit =
             new System.Text.RegularExpressions.Regex(@"^\s*(>=|<=|==|>|<|%)?\s*\d{1,9}\s*$");
         static readonly System.Text.RegularExpressions.Regex Placeholder =
@@ -156,6 +156,7 @@ namespace AutoDebug
                     return Json.Make("breakpoints", backend.EditorBreakpoints(own).Cast<object>().ToList());
                 case "notify": return Notify(args);
                 case "problems": return Problems(args);
+                case "consent": return Consent(args);
                 case "screenshot": return Screenshot(args);
                 case "stop": End(Json.Str(args, "reason") ?? "stopped by the agent"); return Json.Make();
                 default: throw Fail("BAD_REQUEST", $"unknown operation {op}");
@@ -658,6 +659,50 @@ namespace AutoDebug
                 throw Fail("IDE_ERROR", inner.Message);
             }
 #pragma warning restore VSTHRD002
+        }
+
+        // Approval for running a program outside a debug session (a RenderDoc frame capture). The dialog text is built
+        // here from the fields, never taken from the agent as a whole, so it says exactly what will run. Waits on this
+        // connection's thread, never on Visual Studio's main thread.
+        object Consent(Dictionary<string, object> args)
+        {
+            if (Json.Str(args, "kind") != "renderdoc_capture") throw Fail("BAD_REQUEST", "unknown consent kind");
+            string Field(string name, int max)
+            {
+                var value = Json.Get(args, name) as string;
+                if (value == null || value.Length > max || value.Any(c => c < ' ')) throw Fail("BAD_REQUEST", $"bad {name}");
+                return value;
+            }
+            var program = Field("program", 1000);
+            var programArgs = Field("arguments", 2000);
+            var folder = Field("working_dir", 1000);
+            var captures = Field("capture_folder", 1000);
+            var frameValue = Json.Get(args, "frame");
+            long? frame = frameValue is long f && f >= 0 && f < 10000000 ? f : (long?)null;
+            var title = "Autodebug: let the AI agent run a program under RenderDoc to capture a GPU frame?";
+            var detail = string.Join("\n", new[]
+            {
+                $"Runs: {program}{(programArgs.Length > 0 ? " " + programArgs : "")}",
+                $"In: {folder}",
+                frame == null ? "Captures: the frame you trigger in the program (F12 or Print Screen)" : $"Captures: frame {frame}",
+                $"Saves the capture in: {captures}",
+                "RenderDoc records that one frame. The program is closed after the capture.",
+                "Nothing else runs. This approval is for this one capture.",
+            });
+            var answer = new TaskCompletionSource<(bool, string)>();
+            Action close = null;
+            close = backend.Ask(title, detail, (approved, reason) => answer.TrySetResult(
+                (approved, approved ? "the developer clicked Approve" : reason ?? "the developer did not approve")));
+#pragma warning disable VSTHRD002 // a connection thread, as in Dap
+            var answered = answer.Task.Wait(ApprovalMs);
+            var (ok, why) = answered ? answer.Task.Result : (false, "no answer within 2 minutes");
+#pragma warning restore VSTHRD002
+            if (!answered)
+            {
+                try { close?.Invoke(); } catch (Exception error) { backend.Log($"could not close the dialog: {error.Message}"); }
+            }
+            if (ok) backend.Log($"approved: RenderDoc capture of {program}");
+            return Json.Make("approved", ok, "reason", why);
         }
 
         // The Error List and the end of the Build pane, for files in the folder. Reading them runs nothing.

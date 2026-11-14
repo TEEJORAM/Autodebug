@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 from autodebug.connection import Connection, DebugError, discover
-from tests.test_extension import ROOT, HarnessMixin
+from tests.test_extension import ROOT, HarnessMixin, RenderDocCaptureTests
 
 DOTNET = shutil.which("dotnet")
 SOURCE = ROOT / "src" / "autodebug" / "visualstudio"
@@ -222,6 +222,10 @@ class Problems(VisualStudioTest):
                                                "source": "Visual Studio"}])
         self.assertIn("1>geometry.cpp(16,9): error C2065: 'totl': undeclared identifier", result["build_output"])
         self.assertEqual(self.debugger.problems(severity="warning")["count"], 2, "the entry outside the folder is left out")
+
+
+class RenderDocCaptureInVisualStudio(RenderDocCaptureTests, VisualStudioTest):
+    pass
 
 
 class BreakpointsBeforeApprove(VisualStudioTest):

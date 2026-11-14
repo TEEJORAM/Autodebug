@@ -115,7 +115,66 @@ def debug(controller, trace, limit=2000):
             "complete": len(steps) < limit}
 
 
+def capture_frame():
+    """Run the program under RenderDoc and capture one frame: frame AUTODEBUG_RD_FRAME, or the one the developer
+    triggers (F12, Print Screen). The program is closed afterwards. Sets AUTODEBUG_RD_CAPTURE for the summary."""
+    program = os.environ["AUTODEBUG_RD_PROGRAM"]
+    folder = os.environ["AUTODEBUG_RD_WORKDIR"]
+    template = os.path.join(os.environ["AUTODEBUG_RD_CAPDIR"], "autodebug")
+    frame = number("AUTODEBUG_RD_FRAME")
+    wait = number("AUTODEBUG_RD_WAIT", 60)
+    launched = rd.ExecuteAndInject(program, folder, os.environ.get("AUTODEBUG_RD_ARGS", ""), [], template,
+                                   rd.CaptureOptions(), False)
+    if launched.result != rd.ResultCode.Succeeded:
+        raise RuntimeError(f"RenderDoc could not start the program: {launched.result}")
+    control = rd.CreateTargetControl("", launched.ident, "autodebug", True)
+    if control is None:
+        raise RuntimeError("RenderDoc started the program but could not connect to it")
+    mark(f"program started (process {control.GetPID()})")
+    if frame is not None:
+        control.QueueCapture(frame, 1)
+    path = None
+    api = None
+    deadline = time.time() + wait
+    try:
+        while path is None and time.time() < deadline:
+            message = control.ReceiveMessage(None)
+            if message.type == rd.TargetControlMessageType.RegisterAPI:
+                api = message.apiUse.name
+                result["api"] = api
+                mark(f"graphics API in use: {api}")
+            elif message.type == rd.TargetControlMessageType.NewCapture:
+                path = message.newCapture.path
+                result["frame"] = message.newCapture.frameNumber
+                mark(f"captured frame {message.newCapture.frameNumber}")
+            elif message.type == rd.TargetControlMessageType.Disconnected:
+                break
+            time.sleep(0.05)
+        pid = control.GetPID()
+    finally:
+        control.Shutdown()
+    if pid:
+        try:
+            os.kill(pid, 15)  # SIGTERM; on Windows os.kill ends the process
+            mark("program closed")
+        except OSError:
+            pass
+    if path is None:
+        if api is None:
+            raise RuntimeError("the program never used a graphics API RenderDoc captures (D3D11, D3D12, Vulkan, OpenGL) "
+                               f"within {wait} s. On Linux, Vulkan capture needs RenderDoc's Vulkan layer registered: "
+                               "renderdoccmd vulkanlayer --register --user")
+        raise RuntimeError(f"no frame was captured within {wait} s" + ("" if frame is not None else
+                           ": press F12 or Print Screen in the program to capture one"))
+    result["capture"] = path
+    os.environ["AUTODEBUG_RD_CAPTURE"] = path
+
+
 def main():
+    op = os.environ.get("AUTODEBUG_RD_OP", "summary")
+    if op == "capture":
+        capture_frame()
+        os.environ["AUTODEBUG_RD_OP"] = "summary"
     capture = rd.OpenCaptureFile()
     status = capture.OpenFile(os.environ["AUTODEBUG_RD_CAPTURE"], "", None)
     if status != rd.ResultCode.Succeeded:

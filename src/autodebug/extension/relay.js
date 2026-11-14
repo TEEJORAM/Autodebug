@@ -26,7 +26,7 @@ const DAP_COMMANDS = new Set(['threads', 'stackTrace', 'scopes', 'variables', 'n
   'reverseContinue']);
 const STEPS = new Set(['next', 'stepIn', 'stepOut', 'stepBack']);
 // What this relay can do beyond protocol 4's first version; the server checks it.
-const FEATURES = ['breakpoint_options', 'child_sessions', 'inspection', 'problems'];
+const FEATURES = ['breakpoint_options', 'child_sessions', 'inspection', 'problems', 'consent'];
 const HIT = /^\s*(>=|<=|==|>|<|%)?\s*\d{1,9}\s*$/;
 const VARIABLE_PATH = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|->[A-Za-z_$][\w$]*|\[\d{1,9}\])*$/;
 // One token of a condition; the same grammar as the server's check_condition (checks.py) and Gate.cs.
@@ -246,6 +246,7 @@ class Relay {
       case 'breakpoints': return this.breakpoints(args);
       case 'editor_breakpoints': return { breakpoints: this.editorBreakpoints() };
       case 'problems': return this.problems(args);
+      case 'consent': return this.consent(args);
       case 'notify': return this.notify(args);
       case 'stop': return this.end(String(args.reason || 'stopped by the agent')).then(() => ({}));
       default: return fail('BAD_REQUEST', `unknown operation ${op}`);
@@ -253,6 +254,38 @@ class Relay {
   }
 
   // ---- workspace -------------------------------------------------------------
+
+  // Approval for running a program outside a debug session (a RenderDoc frame capture). The dialog text is built
+  // here from the fields, never taken from the agent as a whole, so it says exactly what will run.
+  async consent(args) {
+    if (args.kind !== 'renderdoc_capture') throw new Error('unknown consent kind');
+    const field = (name, max) => {
+      const value = args[name];
+      if (typeof value !== 'string' || value.length > max || /[\u0000-\u001f]/.test(value)) throw new Error(`bad ${name}`);
+      return value;
+    };
+    const program = field('program', 1000);
+    const programArgs = field('arguments', 2000);
+    const folder = field('working_dir', 1000);
+    const captures = field('capture_folder', 1000);
+    const frame = Number.isInteger(args.frame) && args.frame >= 0 && args.frame < 1e7 ? args.frame : null;
+    const title = 'Autodebug: let the AI agent run a program under RenderDoc to capture a GPU frame?';
+    const detail = [
+      `Runs: ${program}${programArgs ? ` ${programArgs}` : ''}`,
+      `In: ${folder}`,
+      frame === null ? 'Captures: the frame you trigger in the program (F12 or Print Screen)' : `Captures: frame ${frame}`,
+      `Saves the capture in: ${captures}`,
+      'RenderDoc records that one frame. The program is closed after the capture.',
+      'Nothing else runs. This approval is for this one capture.',
+    ].join('\n');
+    const choice = await Promise.race([
+      Promise.resolve(this.vscode.window.showWarningMessage(title, { modal: true, detail }, 'Approve')),
+      new Promise((resolve) => { const t = setTimeout(() => resolve('timeout'), APPROVAL_SECONDS * 1000); if (t.unref) t.unref(); }),
+    ]);
+    if (choice === 'Approve') this.log(`approved: RenderDoc capture of ${program}`);
+    return { approved: choice === 'Approve', reason: choice === 'Approve' ? 'the developer clicked Approve'
+      : choice === 'timeout' ? 'no answer within 2 minutes' : 'the developer did not approve' };
+  }
 
   // The IDE's Problems: diagnostics from compilers, linters and task problem matchers, for files in the folder.
   // Reading them runs nothing.
