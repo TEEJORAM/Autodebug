@@ -55,7 +55,7 @@ Several IDEs: pass ide (and workspace_folder) from start_with; paths are relativ
 Attach: start_session with an attach configuration. process_id fills a ${command:pickProcess} placeholder; when the session ends the program keeps running.
 threads lists threads and can select one while paused. stack pages with start_frame (up to 200 frames). inspect depth 0-3 reads children; names can be paths such as mesh.verts[2].co (-> is the same as .).
 exceptions lists the debugger's exception filters and can enable them by id. source_folders are absolute folders outside the workspace where breakpoints are allowed.
-wait(ask_developer=...) shows the developer a note asking them to reproduce something in the GUI. That note is not an approval.
+wait(ask_developer=...) shows the developer a note asking them to reproduce something in the GUI. Set the breakpoints the developer's action will reach first: the note is shown only once the program runs with your breakpoints in place (it waits for that), is refused while you have none (except in reproduce), and lists any breakpoint that is not bound. That note is not an approval.
 args (start_session, reproduce) replaces the configuration's program arguments for this run; the dialog shows them.
 """
 
@@ -174,7 +174,7 @@ TOOLS = {
             "wait_seconds": {"type": "number", "minimum": 0, "maximum": 55, "default": 30},
             "test": _TEST,
         }, ("launch_configuration", "symptom"))),
-    "wait": ("Wait until the session stops, ends or is answered (approval, build). ask_developer shows an information message; it is not an approval.",
+    "wait": ("Wait until the session stops, ends or is answered (approval, build). ask_developer shows an information message once the program runs with your breakpoints in place; it is not an approval.",
              _schema({"timeout_seconds": {"type": "number", "minimum": 0, "maximum": 55, "default": 30},
                       "ask_developer": {"type": "string", "maxLength": 300}})),
     "step": ("Resumes the program (call alone). Step over, into or out of the current line, 1-20 times. Returns the "

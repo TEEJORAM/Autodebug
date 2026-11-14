@@ -376,6 +376,7 @@ namespace AutoDebug
                     if (session != s || s.Phase != "awaiting_approval") return;
                     if (!approved) s.Phase = "denied";
                 }
+                if (!approved) foreach (var mark in s.Marks) Unplace(mark);
                 Emit(Json.Make("kind", "approval", "approved", approved, "reason", reason));
                 if (!approved) return;
                 backend.Log($"approved: {Json.Str(s.Launch, "name")}");
@@ -397,6 +398,17 @@ namespace AutoDebug
                 try { close?.Invoke(); }
                 catch (Exception error) { backend.Log($"could not close the Approve dialog: {error.Message}"); }
             }, null, Timeout.Infinite, Timeout.Infinite);
+            // The developer sees where the agent will stop while deciding: the breakpoints are in the editor while
+            // the dialog is open (a breakpoint runs nothing). Not while Visual Studio is debugging, where they would
+            // take effect before Approve; then they are placed after Approve as before.
+            if (!backend.Debugging())
+            {
+                foreach (var mark in s.Marks)
+                {
+                    try { Place(mark); }
+                    catch (Exception error) { backend.Log($"could not show a breakpoint before Approve: {error.Message}"); }
+                }
+            }
             var title = s.Attach ? $"Autodebug: let the AI agent attach the debugger for \"{s.Label}\"?"
                                  : $"Autodebug: let the AI agent debug \"{Json.Str(s.Launch, "name")}\"?";
             close = backend.Ask(title, DialogText(s, tasks), (approved, reason) =>
@@ -418,6 +430,7 @@ namespace AutoDebug
                 if (result.Status != "succeeded")
                 {
                     lock (sync) s.Phase = "build_failed";
+                    foreach (var mark in s.Marks) Unplace(mark);
                     Emit(Json.Make("kind", "build", "task", s.Task, "status", result.Status, "exit_code", result.ExitCode, "minutes", s.BuildMinutes));
                     return;
                 }
@@ -429,7 +442,7 @@ namespace AutoDebug
                 s.Phase = "starting";
                 if (s.Minutes > 0) s.TimeLimit = new Timer(_ => End("the session time limit was reached"), null, s.Minutes * 60000L, Timeout.Infinite);
             }
-            foreach (var mark in s.Marks.ToList()) Place(mark);
+            foreach (var mark in s.Marks.Where(m => m.Handle == null).ToList()) Place(mark);
             Emit(Json.Make("kind", "starting"));
             Debugger(Json.Make("type", "response", "command", "initialize", "request_seq", 0L, "success", true, "body", backend.Capabilities()));
             Report(s, s.Marks);

@@ -155,7 +155,7 @@ an agent waits longer for the Approve click by calling `wait` again.
 | `open_ide` | Open a solution or project folder in the IDE when no window has it, and wait until Autodebug answers there (see "Opening the IDE") |
 | `start_session` | Ask the developer to approve, then build, set breakpoints, launch or attach; waits for the first stop. `ide` and `workspace_folder` pick the window when several are open. `args` replaces the program's arguments for this run; `ticket` names the issue it is for; `test` runs one test (see "One test") |
 | `reproduce` | Before debugging a reported bug: one approved run with no breakpoints, to its end; returns the exit code and last output lines, and tells the agent to compare them with the ticket's `symptom` |
-| `wait` | Wait for the session to change state. `ask_developer` shows an information message; it is not an approval |
+| `wait` | Wait for the session to change state. `ask_developer` shows an information message; it is not an approval. It is shown only once the program runs (approved, built, started) with the agent's breakpoints in place: the call waits for that within its timeout (else `ask_note` says it was not shown yet), waits up to 2 s for the breakpoints to bind and lists those that did not (`unbound`), and is refused while the agent has no stopping breakpoint or watchpoint (a `reproduce` run may ask without) |
 | `step` | Step over, into or out (1–20 times). `wait_ms` waits for a slow step (default 15 s, max 60 s). `target` steps into one chosen call on the line (`stepInTargets`); `single_thread` keeps the other threads paused; `instruction` steps one machine instruction; kind `back` steps backwards (recording debuggers) |
 | `continue` | Run to the next stop and return it; with `until`, run past other breakpoints to that line. `single_thread`; `reverse` runs backwards to the previous stop (recording debuggers) |
 | `pause` | Stop a running program where it is |
@@ -355,8 +355,12 @@ characters). The dialog shows the server's `notes` (goal, attach target), then
 what the extension itself will run: the build task and its `dependsOn` chain,
 `preLaunchTask`, `postDebugTask`, the program and arguments, the breakpoints,
 `source_folders`, the limits, what happens at the end, and the configuration as
-JSON. Only after **Approve** does it build, place the breakpoints and call
-`startDebugging` with that configuration.
+JSON. While the dialog is open the agent's breakpoints are already in the editor,
+so the developer sees where it will stop (a breakpoint runs nothing); they are
+removed on Deny, no answer, a dismissed dialog or a failed build. When the IDE is
+already debugging a program of the developer's, they would take effect before
+Approve, so then they are placed after Approve instead. Only after **Approve**
+does it build and call `startDebugging` with that configuration.
 
 `dap` accepts only `threads`, `stackTrace`, `scopes`, `variables`, `next`,
 `stepIn`, `stepOut`, `continue`, `pause`, `exceptionInfo`,

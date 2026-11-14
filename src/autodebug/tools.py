@@ -446,10 +446,16 @@ class Debugger:
         if ask_developer is not None and len(ask_developer) > 300:
             raise DebugError("BAD_REQUEST", "ask_developer is at most 300 characters")
         if ask_developer:
-            self._log("asked the developer", "", clean_text(ask_developer, 300))
             wait_ms = int(min(max(timeout_seconds, 0), 55) * 1000)
-            raw = self._call("state", {"since": self.version, "wait_ms": wait_ms, "ask_developer": ask_developer})["state"]
-            return self._state(raw)
+            answer = self._call("state", {"since": self.version, "wait_ms": wait_ms, "ask_developer": ask_developer})
+            if answer.get("asked"):
+                self._log("asked the developer", "", clean_text(ask_developer, 300))
+            result = self._state(answer["state"])
+            if answer.get("ask_note"):
+                result["ask_note"] = answer["ask_note"]
+            if answer.get("unbound"):
+                result["unbound"] = answer["unbound"]
+            return result
         return self._state(self._wait(min(max(timeout_seconds, 0), 55)))
 
     def step(self, kind: str = "over", count: int = 1, wait_ms: int = 15000, target: str | None = None,

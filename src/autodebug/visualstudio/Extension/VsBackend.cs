@@ -277,6 +277,8 @@ namespace AutoDebug.VisualStudio
 
         // -- breakpoints ------------------------------------------------------------------------
 
+        public bool Debugging() => OnMain(() => dte.Debugger.CurrentMode != dbgDebugMode.dbgDesignMode);
+
         public object AddBreakpoint(string file, int line, BreakpointOptions options) => OnMain(() =>
         {
             var (count, kind) = HitCount(options.HitCondition);

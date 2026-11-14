@@ -56,7 +56,8 @@ class HarnessMixin:
                    HARNESS_STACK_THROW=getattr(self, "stack_throw", ""),
                    HARNESS_SLOW_STACK=getattr(self, "slow_stack", ""),
                    HARNESS_STOP_THEN_CONTINUE=getattr(self, "stop_then_continue", ""),
-                   HARNESS_FLOOD=getattr(self, "flood", ""), HARNESS_KEEP_MS="200")
+                   HARNESS_FLOOD=getattr(self, "flood", ""), HARNESS_DEBUGGING=getattr(self, "debugging", ""),
+                   HARNESS_KEEP_MS="200")
         if self.debugpy:
             env["HARNESS_DEBUGPY"] = self.debugpy
         self.lines: queue.Queue[str] = queue.Queue()
@@ -188,6 +189,24 @@ class Extension(HarnessTest):
         self.approved()
         self.debugger.stop_session()
         self.expect("LOG stopped")
+        self.send("breakpoints")
+        self.assertEqual(self.expect("BREAKPOINTS"), "0")
+
+    def test_breakpoints_are_shown_while_the_dialog_is_open(self):
+        self.start(function_breakpoints=["polygon_area"])
+        self.send("breakpoints")
+        self.assertEqual(self.expect("BREAKPOINTS"), "2", "the line and the function breakpoint, before Approve")
+        self.send("approve")
+        self.expect("LOG approved")
+        self.send("breakpoints")
+        self.assertEqual(self.expect("BREAKPOINTS"), "2", "placed once, not again when the session runs")
+
+    def test_denying_removes_the_shown_breakpoints(self):
+        self.start()
+        self.send("deny")
+        deadline = time.monotonic() + 10
+        while self.debugger.wait(0.2)["status"] != "denied" and time.monotonic() < deadline:
+            pass
         self.send("breakpoints")
         self.assertEqual(self.expect("BREAKPOINTS"), "0")
 
@@ -390,6 +409,35 @@ class AskDeveloper(HarnessTest):
             extra = ""
         self.assertFalse(str(extra).startswith("INFO"))
 
+    def test_the_note_waits_until_the_program_runs_with_the_breakpoints(self):
+        self.start()  # the Approve dialog is open; nothing runs and no stop can happen yet
+        early = self.debugger.wait(0.3, ask_developer="move the square")
+        self.assertEqual(early["status"], "awaiting_approval")
+        self.assertIn("not shown yet", early["ask_note"])
+        self.assertFalse(any(e.kind == "asked the developer" for e in self.debugger.timeline))
+        self.send("approve")
+        later = self.debugger.wait(10, ask_developer="move the square")
+        self.assertNotIn("ask_note", later)
+        self.assertEqual(self.expect("INFO", 5), "Autodebug: the AI agent asks you to: move the square")
+        self.assertTrue(any(e.kind == "asked the developer" for e in self.debugger.timeline))
+
+    def test_asking_without_breakpoints_is_refused(self):
+        self.approved(breakpoints=[])
+        with self.assertRaises(DebugError) as caught:
+            self.debugger.wait(0.3, ask_developer="move the square")
+        self.assertIn("set breakpoints before asking the developer", caught.exception.message)
+
+    def test_a_reproduction_may_ask_without_breakpoints(self):
+        self.debugger.reproduce(launch_configuration="Debug tests", symptom="area changes", wait_seconds=0)
+        self.expect("DIALOG")
+        self.send("approve")
+        result = self.debugger.wait(10, ask_developer="move the square")  # not refused for having no breakpoints
+        if any(e.kind == "asked the developer" for e in self.debugger.timeline):
+            self.assertEqual(self.expect("INFO", 5), "Autodebug: the AI agent asks you to: move the square")
+        else:  # the scripted program can end before the note: then it is not shown, and says so
+            self.assertEqual(result["status"], "ended")
+            self.assertIn("not shown: the session is ended", result["ask_note"])
+
 
 class StepFailure(HarnessTest):
     step_fail = "1"
@@ -486,6 +534,12 @@ class UnboundMessage(HarnessTest):
             "not bound yet (No source file named geometry.cpp); it may bind when its module loads",
         )
 
+    def test_asking_says_which_breakpoints_will_not_stop(self):
+        self.approved()
+        result = self.debugger.wait(5, ask_developer="move the square")
+        self.assertEqual(result["unbound"], ["geometry.py:15"])
+        self.assertIn("will not stop there", result["ask_note"])
+
 
 class StopHandling(HarnessTest):
     stack_throw = "1"
@@ -549,6 +603,8 @@ class FailedBuild(HarnessTest):
     def test_failed_build_launches_nothing(self):
         _, result = self.approved(build_task="check")
         self.assertEqual((result["status"], result["exit_code"]), ("build_failed", 2))
+        self.send("breakpoints")
+        self.assertEqual(self.expect("BREAKPOINTS"), "0", "the breakpoints shown before Approve are removed")
 
 
 if __name__ == "__main__":
