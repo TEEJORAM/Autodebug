@@ -153,6 +153,7 @@ an agent waits longer for the Approve click by calling `wait` again.
 |---|---|
 | `list_targets` | IDE windows (with `ide`: cursor, vscode or visualstudio), their folders, launch configurations (program and module separately, each with its `build` type and `start_with`: the exact `ide`, name and folder to pass) and build tasks. `ide` limits it to one IDE |
 | `open_ide` | Open a solution or project folder in the IDE when no window has it, and wait until Autodebug answers there (see "Opening the IDE") |
+| `renderdoc` | Read a RenderDoc capture of one GPU frame (see "RenderDoc"): `op` summary, event, pixel or vertex; `debug_shader`; runs none of the program |
 | `problems` | The IDE's compiler and linter problems for a folder, without a session and without running anything: VS Code and Cursor's Problems (`vscode.languages.getDiagnostics`, every diagnostic source such as language servers and task problem matchers), Visual Studio's Error List entries (as its filters show them) and the last 60 lines of its Build pane. `severity` (error by default, then warning, information, hint), `file` (part of the path), `limit` (≤ 200). Files outside the folder are left out; text is redacted like values. A relay without the `problems` feature fails with `OLD_EXTENSION` |
 | `start_session` | Ask the developer to approve, then build, set breakpoints, launch or attach; waits for the first stop. `ide` and `workspace_folder` pick the window when several are open. `args` replaces the program's arguments for this run; `ticket` names the issue it is for; `test` runs one test (see "One test") |
 | `reproduce` | Before debugging a reported bug: one approved run with no breakpoints, to its end; returns the exit code and last output lines, and tells the agent to compare them with the ticket's `symptom` |
@@ -216,6 +217,41 @@ arguments that run one test with the launch configuration's runner: pytest
 `test` and `args` are not combined. The Approve dialog says that one test runs.
 `start_session`, `reproduce`, `step`, `continue`, `trace` and `pause` move the program; the
 agent must not call them in parallel with `stack` or `inspect`.
+
+## RenderDoc
+
+`renderdoc` reads a RenderDoc capture (`.rdc`) of one GPU frame, for rendering bugs. It
+replays the capture and runs none of the captured program, so it needs no approval.
+
+- **How it runs.** RenderDoc's Python module only loads in the Python it was built for
+  (RenderDoc's documentation; Windows releases build it for RenderDoc's embedded Python).
+  So Autodebug never imports it: it runs `qrenderdoc --python renderdoc_scripts/replay.py`,
+  in RenderDoc's own Python (3.8 in RenderDoc 1.47; the script stays 3.8 compatible), in a
+  separate process with a time limit (`timeout_seconds`, 120 s by default). qrenderdoc runs
+  such a script before its main window and quits without opening it when the script
+  calls `sys.exit` (`qrenderdoc.cpp`). It passes the script no arguments, so the inputs are
+  `AUTODEBUG_RD_*` environment variables; the script writes its JSON result after every
+  step, so a step that never returns still leaves what was found before it (`timed_out`).
+- **Finding RenderDoc.** `AUTODEBUG_QRENDERDOC`, else `qrenderdoc` on PATH, else
+  `%ProgramFiles%\RenderDoc\qrenderdoc.exe`. On Linux qrenderdoc needs an X display
+  (`DISPLAY`) even though its window never opens.
+- **First run.** qrenderdoc asks a first-run question about anonymous statistics in a
+  window before it runs any script (`Analytics::Prompt`), and every month when the user
+  chose to review reports. The script then cannot start: the tool says to open RenderDoc
+  once and answer it. Autodebug does not change RenderDoc's settings.
+- **What it reads.** `op summary`: the frame's actions with event ids (draws, dispatches)
+  and the API's debug messages (redacted). `op event`: the pipeline at that event (shaders
+  with their inputs and outputs, output and depth targets, viewport). `op pixel`: the
+  pixel's history at x, y (each event that wrote it, the colour before and after);
+  `debug_shader` steps its pixel shader (`DebugPixel`). `op vertex`: steps the vertex
+  shader for one vertex (`DebugVertex`). Shader steps list the variables each step changed.
+- **Checked.** RenderDoc 1.47 on Linux with Mesa's software Vulkan (lavapipe) and `vkcube`:
+  capture through target control, then every op. Pixel shader debugging of a shader that
+  samples a texture did not return there (the time limit kept the pixel history); vertex
+  shader debugging worked. Not yet tried on Windows or on a hardware GPU.
+- **Not yet.** Capturing a frame from the agent: it runs the program, so it will go through
+  the Approve dialog (`ExecuteAndInject`, then target control `QueueCapture`, which the same
+  script approach can drive).
 
 ## Working from a ticket
 
