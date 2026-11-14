@@ -150,3 +150,30 @@ class RealCppInspection(RealCpp):
             self.debugger.watch(add=[{"name": "total"}])
         except DebugError as exc:
             self.assertEqual(exc.code, "NOT_SUPPORTED")
+
+
+class StepIntoAChosenCallWithoutStepInTargets(RealCpp):
+    """Visual Studio has no stepInTargets. Its fallback (a temporary function breakpoint and a step over) is checked
+    here against a real debugger, gdb, with its own stepInTargets switched off."""
+
+    def without_step_in_targets(self):
+        for caps in [*self.debugger.connection.s["caps"].values(), self.debugger.connection.s["capabilities"]]:
+            caps.pop("supportsStepInTargetsRequest", None)
+
+    def test_it_enters_the_chosen_call_and_removes_the_temporary_breakpoint(self):
+        self.approved(launch_configuration="Debug C++ direct", breakpoints=[{"file": "cpp/geometry.cpp", "line": 37}],
+                      goal="step into move")
+        self.without_step_in_targets()
+        result = self.debugger.step(kind="into", target="move")
+        self.assertEqual(result["step_into"]["entered"], True, result)
+        self.assertIn(result["location"], ("cpp/geometry.cpp:22", "cpp/geometry.cpp:23"), result)  # in move()
+        self.assertEqual({v["name"]: v["value"] for v in result["variables"]}["dx"], "2")
+        self.assertNotIn("function move", [b["at"] for b in result["breakpoints"]], "the temporary one is removed")
+
+    def test_a_line_without_that_call_steps_over(self):
+        self.approved(launch_configuration="Debug C++ direct", breakpoints=[{"file": "cpp/geometry.cpp", "line": 38}],
+                      goal="no call to move here")
+        self.without_step_in_targets()
+        result = self.debugger.step(kind="into", target="move")
+        self.assertEqual((result["step_into"]["entered"], result["location"]), (False, "cpp/geometry.cpp:39"), result)
+        self.assertIn("does not call it", result["step_into"]["note"])

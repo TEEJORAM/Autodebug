@@ -157,7 +157,7 @@ an agent waits longer for the Approve click by calling `wait` again.
 | `start_session` | Ask the developer to approve, then build, set breakpoints, launch or attach; waits for the first stop. `ide` and `workspace_folder` pick the window when several are open. `args` replaces the program's arguments for this run; `ticket` names the issue it is for; `test` runs one test (see "One test") |
 | `reproduce` | Before debugging a reported bug: one approved run with no breakpoints, to its end; returns the exit code and last output lines, and tells the agent to compare them with the ticket's `symptom` |
 | `wait` | Wait for the session to change state. `ask_developer` shows an information message; it is not an approval. It is shown only once the program runs (approved, built, started) with the agent's breakpoints in place: the call waits for that within its timeout (else `ask_note` says it was not shown yet), waits up to 2 s for the breakpoints to bind and lists those that did not (`unbound`), and is refused while the agent has no stopping breakpoint or watchpoint (a `reproduce` run may ask without) |
-| `step` | Step over, into or out (1–20 times). `wait_ms` waits for a slow step (default 15 s, max 60 s). `target` steps into one chosen call on the line (`stepInTargets`); `single_thread` keeps the other threads paused; `instruction` steps one machine instruction; kind `back` steps backwards (recording debuggers) |
+| `step` | Step over, into or out (1–20 times). `wait_ms` waits for a slow step (default 15 s, max 60 s). `target` steps into one chosen call on the line (`stepInTargets`). A debugger without `stepInTargets` but with function breakpoints (Visual Studio) gets the same effect from a temporary function breakpoint on `target` (a function name such as `move` or `Mesh::area`) and a step over: if the line calls it, the program stops in it, otherwise the step ends on the next line; `step_into` says whether it entered (read from the top frame, not assumed) and the temporary breakpoint is removed. Checked with gdb with its `stepInTargets` switched off; `single_thread` keeps the other threads paused; `instruction` steps one machine instruction; kind `back` steps backwards (recording debuggers) |
 | `continue` | Run to the next stop and return it; with `until`, run past other breakpoints to that line. `single_thread`; `reverse` runs backwards to the previous stop (recording debuggers) |
 | `pause` | Stop a running program where it is |
 | `inspect` | Frame variables (the frame's own scopes: Locals, Arguments; not globals or registers). `depth` 0–3 expands children. Names may be paths (`mesh.verts[2].co`, `items[5000]`). `scope` reads one scope by name, slow ones too (Globals, Registers); the result lists the frame's scopes. `start` and `count` (at most 200) page through one array or list; `hex` asks for hexadecimal values. A large list is read by index: the debugger's paging (`indexedVariables`, `start`, `count`), else debugpy's `more` child and its `[a:b]` ranges, reading only the range that holds the element |
@@ -495,10 +495,14 @@ treats Visual Studio like any other window (`ide: "visualstudio"`).
 - **Modules, threads and processes**: the debug engine's module load and unload,
   thread create and destroy, and process create events become `module`, `thread`
   and `process` events; `modules` lists the loaded modules with symbol status.
-- **Not available in Visual Studio** (`NOT_SUPPORTED`): stepping into a chosen
-  call, stepping back, valid breakpoint lines, code without a file (use
-  `disassemble`), read watchpoints, and globals (Visual Studio has no globals
-  list; read them through a local or a member).
+- **Stepping into a chosen call**: Visual Studio's debug engine `Step` takes no
+  target, so `step` uses a temporary function breakpoint and a step over (see
+  `step`). Not yet tried in Visual Studio itself.
+- **Not available in Visual Studio** (`NOT_SUPPORTED`): stepping back, valid
+  breakpoint lines, code without a file (use `disassemble`), read watchpoints
+  (Visual Studio's data breakpoints stop only when a value changes: "If the value
+  is read but not changed, execution doesn't break"), and globals (Visual Studio
+  has no globals list; read them through a local or a member).
 - **Events**: break mode becomes `stopped` (breakpoint, step, pause or
   exception), run mode `continued`, design mode `exited` and `terminated`; the
   debug engine's breakpoint-bound and binding-error events update which

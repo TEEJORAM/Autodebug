@@ -187,7 +187,8 @@ TOOLS = {
                       "ask_developer": {"type": "string", "maxLength": 300}})),
     "step": ("Resumes the program (call alone). Step over, into or out of the current line, 1-20 times. Returns the "
              "new location and every variable whose value changed. wait_ms is how long to wait for the step (default 15000, max 60000). "
-             "target (kind into): the call on this line to step into, e.g. 'area' in print(area(shape)). single_thread: "
+             "target (kind into): the call on this line to step into, e.g. 'area' in print(area(shape)); in Visual Studio "
+             "the function's name (area or Shape::area), and step_into says whether it entered. single_thread: "
              "the other threads stay paused. instruction: one machine instruction. kind back steps backwards "
              "(recording debuggers such as rr only).",
              _schema({"kind": {"type": "string", "enum": ["over", "into", "out", "back"], "default": "over"},

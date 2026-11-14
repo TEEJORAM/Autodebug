@@ -85,13 +85,23 @@ class PlainDebugger(HarnessTest):
                             (lambda: self.debugger.disassemble(), "disassemble"),
                             (lambda: self.debugger.memory(name="points"), "read memory"),
                             (lambda: self.debugger.step("back"), "step backwards"),
-                            (lambda: self.debugger.inspect(hex=True), "hex"),
-                            (lambda: self.debugger.step("into", target="len"), "step into a chosen call")):
+                            (lambda: self.debugger.inspect(hex=True), "hex")):
             with self.assertRaises(DebugError) as caught:
                 call()
             self.assertEqual(caught.exception.code, "NOT_SUPPORTED")
             self.assertIn(words, caught.exception.message)
             self.assertIn("(debugpy)", caught.exception.message)
+
+
+class PlainDebuggerStepsIntoAChosenCall(PlainDebugger):
+    def test_without_step_in_targets_a_function_breakpoint_is_used(self):
+        self.approved()
+        result = self.debugger.step("into", target="len")
+        self.assertIn("temporary function breakpoint", result["step_into"]["how"])
+        self.assertNotIn("function len", [b["at"] for b in result["breakpoints"]], "the temporary one is removed")
+        with self.assertRaises(DebugError) as caught:
+            self.debugger.step("into", target="len(points)")
+        self.assertIn("the called function's name", caught.exception.message)
 
 
 class Variables(HarnessTest):
