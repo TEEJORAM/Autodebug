@@ -213,6 +213,35 @@ class Session(VisualStudioTest):
         self.assertEqual(json.loads(self.expect("DISCONNECT")), {"detach": False})
 
 
+class BreakpointsBeforeApprove(VisualStudioTest):
+    def test_breakpoints_are_shown_while_the_dialog_is_open(self):
+        self.start()
+        self.send("breakpoints")
+        self.assertEqual(self.expect("BREAKPOINTS"), "1", "the agent's breakpoint is in the editor before Approve")
+        self.send("approve")
+        self.expect("LOG approved")
+        self.send("breakpoints")
+        self.assertEqual(self.expect("BREAKPOINTS"), "1", "placed once, not again when the session runs")
+
+    def test_denying_removes_the_shown_breakpoints(self):
+        self.start()
+        self.send("deny")
+        deadline = time.monotonic() + 10
+        while self.debugger.wait(0.2)["status"] != "denied" and time.monotonic() < deadline:
+            pass
+        self.send("breakpoints")
+        self.assertEqual(self.expect("BREAKPOINTS"), "0")
+
+
+class AlreadyDebugging(VisualStudioTest):
+    debugging = "1"  # the developer is debugging something in this Visual Studio
+
+    def test_breakpoints_wait_for_approve_while_visual_studio_debugs(self):
+        self.start()
+        self.send("breakpoints")
+        self.assertEqual(self.expect("BREAKPOINTS"), "0", "they would take effect before Approve")
+
+
 class Attach(VisualStudioTest):
     def test_attach_needs_a_process_and_detaches(self):
         with self.assertRaises(DebugError) as caught:
@@ -352,12 +381,16 @@ class Inspection(VisualStudioTest):
     stepping options through the Visual Studio relay's core and its scripted backend."""
 
     def test_hit_count_log_point_and_column_reach_visual_studio(self):
-        dialog, result = self.approved(breakpoints=[
-            {"file": "cpp/geometry.cpp", "line": 13, "log_message": "total={total}", "column": 5},
-            {"file": "cpp/geometry.cpp", "line": 16, "hit_condition": ">=2"}])
+        breakpoints = [{"file": "cpp/geometry.cpp", "line": 13, "log_message": "total={total}", "column": 5},
+                       {"file": "cpp/geometry.cpp", "line": 16, "hit_condition": ">=2"}]
+        self.debugger.start_session(**{**self.start_defaults, "breakpoints": breakpoints}, goal="x", wait_seconds=0)
+        # Placed while the dialog is shown, so the developer sees them before Approve.
+        self.assertEqual(self.expect("PLACED"), "geometry.cpp:13 column=5 hit= log=total={total}")
+        dialog = json.loads(self.expect("DIALOG"))
         self.assertIn('cpp/geometry.cpp:13:5 logs "total={total}" without stopping', dialog["detail"])
         self.assertIn("cpp/geometry.cpp:16 at hit >=2", dialog["detail"])
-        self.assertEqual(self.expect("PLACED"), "geometry.cpp:13 column=5 hit= log=total={total}")
+        self.send("approve")
+        result = self.debugger.wait(30)
         self.assertEqual((result["location"], {v["name"]: v["value"] for v in result["variables"]}["i"]),
                          ("cpp/geometry.cpp:16", "1"), "the first pass is skipped")
         self.assertIn("total=0", self.debugger.connection.snapshot()["output"])

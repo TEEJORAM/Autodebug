@@ -64,6 +64,9 @@ namespace AutoDebug
 
         void CancelBuild();
 
+        /// <summary>Whether Visual Studio is debugging (or paused in) a program now, a session the developer started.</summary>
+        bool Debugging();
+
         object AddBreakpoint(string file, int line, BreakpointOptions options);
         object AddFunctionBreakpoint(string name);
         void RemoveBreakpoint(object handle);

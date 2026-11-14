@@ -149,6 +149,8 @@ namespace AutoDebug.Harness
             Say("LOG build terminated");
         }
 
+        public bool Debugging() => Flag("HARNESS_DEBUGGING") == "1";
+
         public object AddBreakpoint(string file, int line, BreakpointOptions options)
         {
             var mark = new Mark { File = file, Line = line, Column = options.Column, Condition = options.Condition, Hit = options.HitCondition, Log = options.LogMessage };

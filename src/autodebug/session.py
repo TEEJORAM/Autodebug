@@ -171,7 +171,7 @@ class Session(Values):
             "functions": [{"name": n, "id": i} for n, i in zip(functions, answer.get("function_ids", []), strict=False)],
             "verified": {}, "by_id": {}, "pending": {}, "capabilities": {}, "asked": None, "connected": False,
             "caps": {}, "root": None, "active": None, "activity": [], "activity_seq": 0, "modules": {},
-            "watches": [], "frames": {},
+            "watches": [], "frames": {}, "reproduce": bool(args.get("reproduce")),
         }
         self._changed()
         return {"state": self.snapshot(), "build": build, "folder": folder}
@@ -635,23 +635,63 @@ class Session(Values):
     def state(self, args: dict) -> dict:
         if self.s is None:
             return {"state": self.snapshot()}
+        since = int(args.get("since") or 0)
+        deadline = time.monotonic() + max(0, min(int(args.get("wait_ms") or 0), 60000)) / 1000
         text = args.get("ask_developer")
+        asking = {}
         if text is not None:
             text = str(text)
             if len(text) > 300:
                 raise DebugError("BAD_REQUEST", "ask_developer is at most 300 characters")
             if text and text != self.s["asked"]:
-                self._relay("notify", {"text": text})
-                self.s["asked"] = text
-        since = int(args.get("since") or 0)
-        deadline = time.monotonic() + max(0, min(int(args.get("wait_ms") or 0), 60000)) / 1000
+                asking = self._ask_developer(text, deadline)
         self._pump(0)
         while self.version <= since:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
             self._pump(int(min(remaining, 25) * 1000))
-        return {"state": self.snapshot()}
+        return {"state": self.snapshot(), **asking}
+
+    def _stops(self) -> list[tuple[str, str]]:
+        """The agent's breakpoints that stop the program (not log points): (shown name, key)."""
+        s = self.s
+        stops = [(f"{self._relative(b['full'])}:{b['line']}", f"{_key(b['full'])}:{b['line']}")
+                 for b in s["breakpoints"] if not b.get("log")]
+        stops += [(f"function {f['name']}", f"fn:{f['name']}") for f in s["functions"]]
+        return stops
+
+    def _ask_developer(self, text: str, deadline: float) -> dict:
+        """Show the developer the agent's request only once the program runs with the agent's breakpoints in
+        place, so the developer's action stops where the agent expects. Waits (within the call's wait) for the
+        program to start and the breakpoints to bind; says which did not."""
+        s = self.s
+        if not s["reproduce"] and not self._stops() and not s["watches"]:
+            raise DebugError("BAD_REQUEST", "set breakpoints before asking the developer to act: the program has no "
+                                            "breakpoint of yours to stop at. Add them with the breakpoints tool "
+                                            "(add=[{file, line}]) at the code their action reaches, then ask again.")
+        self._pump(0)
+        while s["status"] in ("awaiting_approval", "building", "starting") and time.monotonic() < deadline:
+            self._pump(int(min(deadline - time.monotonic(), 25) * 1000))
+        if s["status"] in FINISHED:
+            return {"asked": False, "ask_note": f"not shown: the session is {s['status']}, so nothing would stop. "
+                                                "Start a session again with your breakpoints, then ask."}
+        if s["status"] not in ("running", "paused"):
+            return {"asked": False, "ask_note": f"not shown yet: the session is {s['status']}. The developer is asked "
+                                                "once the program runs with your breakpoints in place; call wait "
+                                                "with the same ask_developer again."}
+        bind_deadline = min(deadline, time.monotonic() + 2)
+        while not all(self._verified(key) for _, key in self._stops()) and time.monotonic() < bind_deadline:
+            self._pump(int(max(bind_deadline - time.monotonic(), 0) * 1000))
+        unbound = [name for name, key in self._stops() if not self._verified(key)]
+        self._relay("notify", {"text": text})
+        s["asked"] = text
+        result: dict = {"asked": True}
+        if unbound:
+            result["unbound"] = unbound
+            result["ask_note"] = ("asked, but these breakpoints are not bound, so the program will not stop there: "
+                                  f"{', '.join(unbound)}. Check the file and line (or the module is not loaded yet).")
+        return result
 
     # -- inspection ----------------------------------------------------------------------
 

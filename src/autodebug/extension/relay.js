@@ -431,10 +431,14 @@ class Relay {
   ask(s) {
     const answered = (approved, reason) => {
       if (this.session !== s || s.phase !== 'awaiting_approval') return false;
-      if (!approved) s.phase = 'denied';
+      if (!approved) { s.phase = 'denied'; this.removeAll(s); }
       this.emit({ kind: 'approval', approved, reason });
       return true;
     };
+    // The developer sees where the agent will stop while deciding: the breakpoints are in the editor while the
+    // dialog is open (a breakpoint runs nothing). Not while another debug session runs in this window, where
+    // they would take effect before Approve; then they are placed after Approve as before.
+    if (!this.vscode.debug.activeDebugSession) this.place(s, s.breakpoints, s.functions);
     const timeout = setTimeout(() => answered(false, 'no answer within 2 minutes'), APPROVAL_SECONDS * 1000);
     if (timeout.unref) timeout.unref();
     const title = s.launch.request === 'attach'
@@ -460,7 +464,12 @@ class Relay {
       this.emit({ kind: 'build', task: s.task.label, status: 'running', exit_code: null });
       const all = await vs.tasks.fetchTasks();
       const task = all.find((t) => t.name === s.task.label && t.scope && t.scope.uri && t.scope.uri.fsPath === s.folder.uri.fsPath);
-      if (!task) { s.phase = 'build_failed'; this.emit({ kind: 'build', task: s.task.label, status: 'unavailable', exit_code: null }); return; }
+      if (!task) {
+        s.phase = 'build_failed';
+        this.removeAll(s);
+        this.emit({ kind: 'build', task: s.task.label, status: 'unavailable', exit_code: null });
+        return;
+      }
       const code = await new Promise((resolve) => {
         const timer = setTimeout(() => {
           try { if (s.execution) s.execution.terminate(); } catch (_) { /* already finished */ }
@@ -478,13 +487,14 @@ class Relay {
       if (this.session !== s || s.phase !== 'building') return;
       if (code !== 0) {
         s.phase = 'build_failed';
+        this.removeAll(s);
         this.emit({ kind: 'build', task: s.task.label, status: code === 'timeout' ? 'timeout' : 'failed',
           exit_code: code === 'timeout' || code === undefined ? null : code, minutes: s.buildMinutes });
         return;
       }
       this.emit({ kind: 'build', task: s.task.label, status: 'succeeded', exit_code: 0 });
     }
-    this.place(s, s.breakpoints, s.functions);
+    this.place(s, s.breakpoints.filter((b) => !b.handle), s.functions.filter((f) => !f.handle));
     if (s.minutes) {
       s.timer = setTimeout(() => this.end('the session time limit was reached'), s.minutes * 60000);
       if (s.timer.unref) s.timer.unref();
